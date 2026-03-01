@@ -12,6 +12,9 @@ env/
 # Build/output
 Output/
 *.log
+build/
+dist/
+*.spec
 
 # OS/editor
 .DS_Store
