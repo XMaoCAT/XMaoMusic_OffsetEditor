@@ -48,12 +48,12 @@
 
 首次准备环境需要联网。`.venv` 和 `.runtime` 都是项目本地目录，删除后再次运行 `Start.bat` 即可自动重建。
 
-## Windows 与 Mac 纯净版
+## Windows 与 Mac 发布版
 
-仓库中的 `纯净版` 目录提供两个互不混用的平台版本：
+仓库中的 `Releases` 目录提供两个互不混用的平台版本：
 
-- `纯净版/Windows`：包含 `Start.bat`、Windows 环境检测脚本和已构建的 `Core0/ncm-core.exe`。
-- `纯净版/Mac`：包含 `Start.command`、macOS 环境检测脚本，以及 Apple Silicon / Intel 的 DMG 构建脚本。
+- `Releases/Windows`：包含 `Start.bat`、Windows 环境检测脚本和已构建的 `Core0/ncm-core.exe`。
+- `Releases/Mac`：包含 `Start.command`、macOS 环境检测脚本，以及 Apple Silicon / Intel 的 DMG 构建脚本。
 
 两份目录均不包含运行记录、虚拟环境、下载缓存、用户输出、日志、测试截图或构建中间文件。需要重新生成时，在 Windows PowerShell 中运行：
 
@@ -78,7 +78,7 @@ powershell -ExecutionPolicy Bypass -File .\build_clean_distribution.ps1
 
 ## macOS
 
-源码仓库中的 macOS 入口为 `Mac/Start.command`；`纯净版/Mac` 独立目录中的入口为根部 `Start.command`。首次运行会检查 Python 与 FFmpeg；缺失时显示下载进度，并优先使用清华、北外和南京大学镜像。详细说明见 `Mac/README.md`，纯净版内对应 `README-macOS.md`。
+源码仓库中的 macOS 入口为 `Mac/Start.command`；`Releases/Mac` 独立目录中的入口为根部 `Start.command`。首次运行会检查 Python 与 FFmpeg；缺失时显示下载进度，并优先使用清华、北外和南京大学镜像。详细说明见 `Mac/README.md`，发布版内对应 `README-macOS.md`。
 
 DMG 必须在 macOS 上构建：
 
@@ -87,7 +87,7 @@ DMG 必须在 macOS 上构建：
 chmod +x Mac/Start.command Mac/bootstrap_macos.sh Mac/build_dmg.sh
 ./Mac/build_dmg.sh
 
-# 纯净版/Mac 独立目录布局
+# Releases/Mac 独立目录布局
 chmod +x Start.command bootstrap_macos.sh build_dmg.sh
 ./build_dmg.sh
 ```

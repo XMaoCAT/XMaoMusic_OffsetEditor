@@ -12,7 +12,7 @@ chmod +x Mac/Start.command Mac/bootstrap_macos.sh Mac/build_dmg.sh
 ./Mac/Start.command
 ```
 
-From the standalone `纯净版/Mac` directory:
+From the standalone `Releases/Mac` directory:
 
 ```bash
 chmod +x Start.command bootstrap_macos.sh build_dmg.sh

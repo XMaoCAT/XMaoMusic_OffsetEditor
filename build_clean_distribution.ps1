@@ -3,7 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$DistributionName = -join ([char[]](0x7EAF, 0x51C0, 0x7248))
+$DistributionName = "Releases"
 $DistributionRoot = Join-Path $ProjectRoot $DistributionName
 $WindowsRoot = Join-Path $DistributionRoot "Windows"
 $MacRoot = Join-Path $DistributionRoot "Mac"

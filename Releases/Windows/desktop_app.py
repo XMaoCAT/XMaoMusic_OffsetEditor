@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QFileDialog, QMainWindow
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QWidget
 
 from audio_core import (
     BIT_DEPTHS,
@@ -35,6 +35,9 @@ from audio_core import (
 
 PROJECT_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 UI_ROOT = PROJECT_ROOT / "ui"
+WINDOWS_TITLEBAR_HEIGHT = 54
+WINDOWS_TITLEBAR_CENTER_HALF_WIDTH = 150
+WINDOWS_TITLEBAR_ACTION_WIDTH = 196
 if getattr(sys, "frozen", False):
     OUTPUT_ROOT = (
         Path.home() / "Music" / "XMaoMusic Output"
@@ -51,6 +54,14 @@ def platform_name() -> str:
     if sys.platform.startswith("win"):
         return "windows"
     return "linux"
+
+
+def windows_titlebar_drag_regions(width: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    center = width // 2
+    left_end = max(0, center - WINDOWS_TITLEBAR_CENTER_HALF_WIDTH)
+    right_start = min(width, center + WINDOWS_TITLEBAR_CENTER_HALF_WIDTH)
+    right_end = max(right_start, width - WINDOWS_TITLEBAR_ACTION_WIDTH)
+    return (0, left_end), (right_start, right_end - right_start)
 
 
 def json_result(**values) -> str:
@@ -536,8 +547,6 @@ class AudioWebView(QWebEngineView):
         super().__init__(window)
         self.main_window = window
         self.setAcceptDrops(True)
-        self._drag_global: Optional[QPoint] = None
-        self._window_origin: Optional[QPoint] = None
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802
         event.ignore()
@@ -563,44 +572,36 @@ class AudioWebView(QWebEngineView):
                 return
         super().dropEvent(event)
 
-    def _is_draggable_titlebar(self, position) -> bool:
-        if position.y() < 0 or position.y() > 54:
-            return False
-        x = position.x()
-        width = self.width()
-        if width / 2 - 150 <= x <= width / 2 + 150:
-            return False
-        action_width = 56 if sys.platform == "darwin" else 188
-        return 0 <= x < width - action_width
+
+class WindowDragHandle(QWidget):
+    def __init__(self, parent: QWidget, window: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main_window = window
+        self._drag_global: Optional[QPoint] = None
+        self._window_origin: Optional[QPoint] = None
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        if (
-            event.button() == Qt.LeftButton
-            and self._is_draggable_titlebar(event.position())
-        ):
-            handle = self.main_window.windowHandle()
-            if handle is not None and handle.startSystemMove():
-                event.accept()
-                return
-            if self.main_window.isMaximized():
-                super().mousePressEvent(event)
-                return
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+        if not self.main_window.isMaximized():
             self._drag_global = event.globalPosition().toPoint()
             self._window_origin = self.main_window.frameGeometry().topLeft()
-        super().mousePressEvent(event)
+        event.accept()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._drag_global and self._window_origin and event.buttons() & Qt.LeftButton:
             self.main_window.move(self._window_origin + event.globalPosition().toPoint() - self._drag_global)
-        super().mouseMoveEvent(event)
+        event.accept()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         self._drag_global = None
         self._window_origin = None
-        super().mouseReleaseEvent(event)
+        event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton and self._is_draggable_titlebar(event.position()):
+        if event.button() == Qt.LeftButton:
             self.main_window.toggle_maximize()
             event.accept()
             return
@@ -620,6 +621,14 @@ class MainWindow(QMainWindow):
 
         self.web_view = AudioWebView(self)
         self.setCentralWidget(self.web_view)
+        self.drag_handles: list[WindowDragHandle] = []
+        if sys.platform.startswith("win"):
+            self.drag_handles = [
+                WindowDragHandle(self.web_view, self),
+                WindowDragHandle(self.web_view, self),
+            ]
+            self.web_view.loadFinished.connect(lambda _ok: QTimer.singleShot(0, self._layout_drag_handles))
+            self._layout_drag_handles()
         self.web_view.page().setBackgroundColor(QColor("#071014"))
         settings = self.web_view.settings()
         settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
@@ -634,6 +643,22 @@ class MainWindow(QMainWindow):
         if not html_path.exists():
             raise FileNotFoundError(f"界面文件不存在：{html_path}")
         self.web_view.setUrl(QUrl.fromLocalFile(str(html_path)))
+
+    def _layout_drag_handles(self) -> None:
+        if not self.drag_handles:
+            return
+        for drag_handle, (x, width) in zip(
+            self.drag_handles,
+            windows_titlebar_drag_regions(self.web_view.width()),
+        ):
+            drag_handle.setGeometry(x, 0, width, WINDOWS_TITLEBAR_HEIGHT)
+            drag_handle.show()
+            drag_handle.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "drag_handles"):
+            self._layout_drag_handles()
 
     def toggle_maximize(self) -> None:
         if self.isMaximized():
