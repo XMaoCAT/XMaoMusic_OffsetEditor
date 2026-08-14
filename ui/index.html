@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>XMaoMusic OffsetEditor</title>
+  <link rel="icon" href="data:,">
+  <script>
+    (() => {
+      const saved = localStorage.getItem("xmao-theme");
+      const theme = saved === "light" || saved === "dark"
+        ? saved
+        : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="fluidCanvas" aria-hidden="true"></canvas>
+
+  <div class="app-shell" id="appShell">
+    <header class="titlebar">
+      <div class="brand-lockup">
+        <span class="brand-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M2 10v4M6 6v12M10 3v18M14 8v8M18 5v14M22 10v4"/></svg>
+        </span>
+        <span class="brand-name">XMaoMusic OffsetEditor</span>
+      </div>
+      <nav class="task-tabs" aria-label="工具模式">
+        <button class="task-tab is-active" id="offsetTaskTab" type="button" data-tool="offset" aria-selected="true">
+          <svg viewBox="0 0 24 24"><path d="M3 12h3l2-7 4 14 3-10 2 6h4"/></svg>
+          <span>偏移编辑</span>
+        </button>
+        <button class="task-tab" id="convertTaskTab" type="button" data-tool="convert" aria-selected="false">
+          <svg viewBox="0 0 24 24"><path d="M7 7h11l-3-3m3 3-3 3M17 17H6l3 3m-3-3 3-3"/></svg>
+          <span>格式转换</span>
+        </button>
+      </nav>
+      <div class="titlebar-actions">
+        <button class="icon-button theme-button" id="themeButton" type="button" title="切换到浅色主题" aria-label="切换到浅色主题">
+          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24"><path d="M20 15.4A8.3 8.3 0 0 1 8.6 4a8.5 8.5 0 1 0 11.4 11.4Z"/></svg>
+        </button>
+        <div class="window-controls" aria-label="窗口控制">
+          <button class="icon-button window-button" id="minimizeButton" type="button" title="最小化" aria-label="最小化">
+            <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+          </button>
+          <button class="icon-button window-button" id="maximizeButton" type="button" title="最大化或还原" aria-label="最大化或还原">
+            <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>
+          </button>
+          <button class="icon-button window-button close-button" id="closeButton" type="button" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace tool-view" id="offsetView">
+      <section class="audio-workbench" aria-label="音频编辑工作区">
+        <div class="file-strip" id="fileStrip">
+          <div class="file-identity">
+            <span class="file-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+            </span>
+            <div class="file-copy">
+              <strong id="fileName">尚未导入音频</strong>
+              <span id="fileMeta">支持 MP3、WAV、FLAC、OGG、M4A、AAC、WMA、AIFF、Opus</span>
+            </div>
+          </div>
+          <button class="secondary-button" id="importButton" type="button">
+            <svg viewBox="0 0 24 24"><path d="M4 18V6a2 2 0 0 1 2-2h5l2 3h5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M12 11v6m-3-3 3-3 3 3"/></svg>
+            <span>导入音频</span>
+          </button>
+        </div>
+
+        <div class="waveform-stage is-empty" id="waveformStage" tabindex="0" role="button" aria-label="拖放音频或点击导入">
+          <canvas id="waveformCanvas" aria-label="音频波形"></canvas>
+          <div class="empty-state" id="emptyState">
+            <span class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M3 12h3l2-7 4 14 3-10 2 6h4"/></svg>
+            </span>
+            <strong>拖放音频到工作区</strong>
+            <span>或点击导入音频</span>
+          </div>
+          <div class="loading-state" id="loadingState" hidden>
+            <span class="loading-ring" aria-hidden="true"></span>
+            <strong>正在分析音频</strong>
+          </div>
+        </div>
+
+        <div class="operation-panel">
+          <div class="segmented-control" role="group" aria-label="起始处理方式">
+            <button class="segment is-active" type="button" data-action="trim" aria-pressed="true">
+              <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="3"/><circle cx="6" cy="17" r="3"/><path d="m8.7 8.3 10.8 7.4M8.7 15.7 19.5 8.3"/></svg>
+              删除开头
+            </button>
+            <button class="segment" type="button" data-action="prepend" aria-pressed="false">
+              <svg viewBox="0 0 24 24"><path d="M4 12h2m2-4v8m4-11v14m4-11v8m4-4h2"/></svg>
+              添加静音
+            </button>
+          </div>
+
+          <div class="offset-editor">
+            <label for="offsetInput">偏移时间</label>
+            <div class="time-stepper">
+              <button class="icon-button step-button" id="decreaseOffset" type="button" title="减少 0.01 秒" aria-label="减少偏移时间">
+                <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+              </button>
+              <div class="time-input-wrap">
+                <input id="offsetInput" type="number" min="0.001" max="3600" step="0.001" value="0.500" inputmode="decimal" aria-describedby="offsetHint">
+                <span>秒</span>
+              </div>
+              <button class="icon-button step-button" id="increaseOffset" type="button" title="增加 0.01 秒" aria-label="增加偏移时间">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <span class="control-hint" id="offsetHint">精度 1 ms · 单步 10 ms</span>
+          </div>
+
+          <div class="duration-preview" aria-live="polite">
+            <span>输出时长</span>
+            <div class="duration-flow">
+              <span id="sourceDuration">--:--.---</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+              <strong id="outputDuration">--:--.---</strong>
+            </div>
+            <button class="text-icon-button" id="resetButton" type="button">
+              <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+              重置
+            </button>
+          </div>
+        </div>
+
+        <div class="export-row">
+          <div class="export-summary">
+            <span>预计大小</span>
+            <strong id="estimatedSize">--</strong>
+          </div>
+          <button class="primary-button" id="exportButton" type="button" disabled>
+            <svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 17v3h14v-3"/></svg>
+            <span>开始导出</span>
+          </button>
+        </div>
+      </section>
+
+      <aside class="inspector" aria-label="输出参数">
+        <div class="inspector-heading">
+          <div>
+            <h1>输出参数</h1>
+            <p>根据目标格式自动约束有效选项</p>
+          </div>
+          <button class="icon-button motion-button" id="motionButton" type="button" title="切换背景动效" aria-label="切换背景动效" aria-pressed="true">
+            <svg viewBox="0 0 24 24"><path d="M3 12c3-6 6 6 9 0s6 6 9 0"/><path d="M3 7c3-4 6 4 9 0s6 4 9 0"/></svg>
+          </button>
+        </div>
+
+        <div class="parameter-list">
+          <label class="field-row" for="sampleRateSelect">
+            <span>采样率</span>
+            <select id="sampleRateSelect"></select>
+          </label>
+          <label class="field-row" for="channelsSelect">
+            <span>声道</span>
+            <select id="channelsSelect"></select>
+          </label>
+          <label class="field-row" for="bitDepthSelect">
+            <span>位深</span>
+            <select id="bitDepthSelect"></select>
+          </label>
+          <label class="field-row" for="bitrateSelect">
+            <span>比特率</span>
+            <select id="bitrateSelect"></select>
+          </label>
+          <label class="field-row" for="formatSelect">
+            <span>目标格式</span>
+            <select id="formatSelect"></select>
+          </label>
+        </div>
+
+        <div class="inspector-divider"></div>
+
+        <div class="option-stack">
+          <label class="switch-row">
+            <span>
+              <strong>防爆音平滑</strong>
+              <small>在编辑接点加入短淡入</small>
+            </span>
+            <input id="antiClickToggle" type="checkbox" checked>
+            <span class="switch" aria-hidden="true"></span>
+          </label>
+          <label class="field-row compact-field" for="fadeSelect" id="fadeField">
+            <span>淡入时长</span>
+            <select id="fadeSelect">
+              <option value="3">3 ms</option>
+              <option value="5">5 ms</option>
+              <option value="8" selected>8 ms</option>
+              <option value="10">10 ms</option>
+              <option value="20">20 ms</option>
+            </select>
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>峰值标准化</strong>
+              <small>导出峰值保持在 -1 dBFS</small>
+            </span>
+            <input id="normalizeToggle" type="checkbox">
+            <span class="switch" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="inspector-divider"></div>
+
+        <div class="filename-group">
+          <label for="filenameInput">输出文件名</label>
+          <div class="filename-input">
+            <input id="filenameInput" type="text" placeholder="导入音频后自动生成" autocomplete="off">
+            <span id="filenameExtension">.wav</span>
+          </div>
+          <span>保存到项目 Output 文件夹，已存在时自动编号</span>
+        </div>
+      </aside>
+    </main>
+
+    <main class="converter-workspace tool-view" id="converterView" hidden>
+      <section class="converter-workbench" aria-label="音频转换工作区">
+        <div class="file-strip">
+          <div class="file-identity">
+            <span class="file-icon converter-file-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 17V7a2 2 0 0 1 2-2h6l2 3h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="m9 14 2 2 4-5"/></svg>
+            </span>
+            <div class="file-copy">
+              <strong id="converterFileName">尚未导入音频</strong>
+              <span id="converterFileMeta">支持常用音频格式与网易云 NCM 文件</span>
+            </div>
+          </div>
+          <button class="secondary-button" id="converterImportButton" type="button">
+            <svg viewBox="0 0 24 24"><path d="M4 18V6a2 2 0 0 1 2-2h5l2 3h5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M12 11v6m-3-3 3-3 3 3"/></svg>
+            <span>导入文件</span>
+          </button>
+        </div>
+
+        <div class="converter-stage is-empty" id="converterStage" tabindex="0" role="button" aria-label="拖放音频或 NCM 文件">
+          <canvas id="converterWaveformCanvas" aria-label="转换音频波形"></canvas>
+          <div class="empty-state" id="converterEmptyState">
+            <span class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M5 7h10m0 0-3-3m3 3-3 3M19 17H9m0 0 3 3m-3-3 3-3"/></svg>
+            </span>
+            <strong>拖放音频或 NCM 文件</strong>
+            <span>自动读取参数并分析节拍</span>
+          </div>
+          <div class="loading-state" id="converterLoadingState" hidden>
+            <span class="loading-ring" aria-hidden="true"></span>
+            <strong>正在准备音频</strong>
+          </div>
+        </div>
+
+        <section class="tempo-workspace" aria-label="BPM 分析">
+          <div class="tempo-readout">
+            <span>BPM</span>
+            <strong id="bpmValue">--.-</strong>
+            <small id="bpmStatus">等待音频</small>
+          </div>
+          <div class="beat-lane" id="beatLane" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <i id="beatCursor"></i>
+          </div>
+          <div class="tempo-meta">
+            <span>分析范围</span>
+            <strong id="bpmDuration">--:--</strong>
+          </div>
+        </section>
+
+        <div class="conversion-route" aria-live="polite">
+          <div>
+            <span>源格式</span>
+            <strong id="converterSourceFormat">--</strong>
+          </div>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          <div>
+            <span>目标格式</span>
+            <strong id="converterTargetFormat">--</strong>
+          </div>
+          <div class="route-size">
+            <span>预计大小</span>
+            <strong id="converterEstimatedSize">--</strong>
+          </div>
+        </div>
+
+        <button class="primary-button converter-action" id="convertButton" type="button" disabled>
+          <svg viewBox="0 0 24 24"><path d="M7 7h11l-3-3m3 3-3 3M17 17H6l3 3m-3-3 3-3"/></svg>
+          <span>开始转换</span>
+        </button>
+      </section>
+
+      <aside class="converter-inspector" aria-label="格式转换参数">
+        <div class="inspector-heading">
+          <div>
+            <h1>转换参数</h1>
+            <p>根据编码器限制匹配有效设置</p>
+          </div>
+          <span class="format-route-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 7h11m0 0-3-3m3 3-3 3M19 17H8m0 0 3 3m-3-3 3-3"/></svg>
+          </span>
+        </div>
+
+        <div class="parameter-list converter-parameters">
+          <label class="field-row" for="converterFormatSelect">
+            <span>目标格式</span>
+            <select id="converterFormatSelect"></select>
+          </label>
+          <label class="field-row" for="converterSampleRateSelect">
+            <span>采样率</span>
+            <select id="converterSampleRateSelect"></select>
+          </label>
+          <label class="field-row" for="converterChannelsSelect">
+            <span>声道</span>
+            <select id="converterChannelsSelect"></select>
+          </label>
+          <label class="field-row" for="converterBitDepthSelect">
+            <span>位深</span>
+            <select id="converterBitDepthSelect"></select>
+          </label>
+          <label class="field-row" for="converterBitrateSelect">
+            <span>比特率</span>
+            <select id="converterBitrateSelect"></select>
+          </label>
+        </div>
+
+        <div class="inspector-divider"></div>
+
+        <label class="switch-row">
+          <span>
+            <strong>峰值标准化</strong>
+            <small>导出峰值保持在 -1 dBFS</small>
+          </span>
+          <input id="converterNormalizeToggle" type="checkbox">
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+
+        <div class="inspector-divider"></div>
+
+        <div class="filename-group">
+          <label for="converterFilenameInput">输出文件名</label>
+          <div class="filename-input">
+            <input id="converterFilenameInput" type="text" placeholder="导入音频后自动生成" autocomplete="off">
+            <span id="converterFilenameExtension">.mp3</span>
+          </div>
+          <span>保存到项目 Output 文件夹，已存在时自动编号</span>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <div class="status-message" id="statusMessage" role="status" aria-live="polite">
+        <span class="status-dot is-ready"></span>
+        <span id="statusText">准备就绪</span>
+      </div>
+      <div class="progress-track" id="progressTrack" aria-hidden="true"><span id="progressFill"></span></div>
+      <div class="status-actions">
+        <span id="ffmpegStatus">FFmpeg 检查中</span>
+        <button class="icon-button" id="revealOutputButton" type="button" title="打开输出文件夹" aria-label="打开输出文件夹">
+          <svg viewBox="0 0 24 24"><path d="M4 18V6a2 2 0 0 1 2-2h5l2 3h5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="assertive"></div>
+
+  <dialog class="confirm-dialog" id="ncmConfirmDialog" aria-labelledby="ncmDialogTitle">
+    <form method="dialog">
+      <span class="dialog-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 17V7a2 2 0 0 1 2-2h6l2 3h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="m9 14 2 2 4-5"/></svg>
+      </span>
+      <div>
+        <h2 id="ncmDialogTitle">转换 NCM 文件</h2>
+        <p id="ncmDialogFile">--</p>
+        <p>将先在后台转换为 WAV，完成后自动载入并分析 BPM。</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-button" id="cancelNcmButton" type="submit" value="cancel">取消</button>
+        <button class="primary-button" id="confirmNcmButton" type="submit" value="confirm">继续转换</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="fluid.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
