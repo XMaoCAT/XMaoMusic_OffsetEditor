@@ -1,6 +1,6 @@
 # Windows 与 macOS 支持说明
 
-XMaoMusic OffsetEditor 在 `Releases` 中提供 Windows 和 macOS 两套独立发布目录。两套版本使用相同的本地 HTML 界面、音频处理逻辑、格式转换能力、BPM 检测和 NCM 流式解密实现。
+XMaoMusic OffsetEditor 在 `Releases` 中提供 Windows 和 macOS 两套独立发布目录。两套版本使用相同的本地 HTML 界面、可拖动播放头与剪切点试听、音频处理逻辑、格式转换能力、BPM 检测和 NCM 流式解密实现。
 
 ## Windows
 
@@ -18,6 +18,7 @@ XMaoMusic OffsetEditor 在 `Releases` 中提供 Windows 和 macOS 两套独立�
 - 源码运行时可直接使用内置 NCM 实现；`build_dmg.sh` 会为当前 Mac 架构构建独立的 `Core0/ncm-core`。
 - DMG 必须在对应架构的 Mac 上构建，Windows 无法生成有效的 macOS 应用包。
 - 打包版输出文件保存在 `~/Music/XMaoMusic Output`。
+- 诊断日志保存在 `~/Library/Logs/XMaoMusic OffsetEditor/application.log`。
 
 ## 发布版内容
 

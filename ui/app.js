@@ -10,6 +10,12 @@
     importButton: $("#importButton"),
     waveformStage: $("#waveformStage"),
     waveformCanvas: $("#waveformCanvas"),
+    playbackHead: $("#playbackHead"),
+    playPauseButton: $("#playPauseButton"),
+    stopButton: $("#stopButton"),
+    previewCutButton: $("#previewCutButton"),
+    playbackCurrent: $("#playbackCurrent"),
+    playbackTotal: $("#playbackTotal"),
     emptyState: $("#emptyState"),
     loadingState: $("#loadingState"),
     offsetInput: $("#offsetInput"),
@@ -88,6 +94,10 @@
     pendingNcmPath: null,
     progress: 0,
     theme: document.documentElement.dataset.theme || "dark",
+    playbackState: "stopped",
+    playbackPositionMs: 0,
+    playbackDurationMs: 0,
+    scrubbing: false,
   };
   window.__xmaoState = state;
 
@@ -146,7 +156,11 @@
       this.ncmConverted = new MockSignal();
       this.ncmConversionFailed = new MockSignal();
       this.windowStateChanged = new MockSignal();
+      this.playbackChanged = new MockSignal();
+      this.playbackPositionChanged = new MockSignal();
+      this.playbackFailed = new MockSignal();
       this.notice = new MockSignal();
+      this.playbackTimer = null;
     }
     getInitialState(callback) {
       callback(JSON.stringify({
@@ -222,6 +236,39 @@
       }, 100);
     }
     revealOutput(callback) { callback(JSON.stringify({ ok: true })); }
+    playFrom(position, callback) {
+      this.playbackPosition = Number(position) || 0;
+      clearInterval(this.playbackTimer);
+      this.playbackChanged.emit("playing");
+      this.playbackPositionChanged.emit(this.playbackPosition, mockAudio().durationMs);
+      this.playbackTimer = setInterval(() => {
+        this.playbackPosition += 100;
+        if (this.playbackPosition >= mockAudio().durationMs) {
+          this.playbackPosition = mockAudio().durationMs;
+          clearInterval(this.playbackTimer);
+          this.playbackChanged.emit("stopped");
+        }
+        this.playbackPositionChanged.emit(this.playbackPosition, mockAudio().durationMs);
+      }, 100);
+      callback(JSON.stringify({ ok: true, positionMs: this.playbackPosition }));
+    }
+    pausePlayback(callback) {
+      clearInterval(this.playbackTimer);
+      this.playbackChanged.emit("paused");
+      callback(JSON.stringify({ ok: true }));
+    }
+    stopPlayback(callback) {
+      clearInterval(this.playbackTimer);
+      this.playbackPosition = 0;
+      this.playbackChanged.emit("stopped");
+      this.playbackPositionChanged.emit(0, mockAudio().durationMs);
+      callback(JSON.stringify({ ok: true }));
+    }
+    seekPlayback(position, callback) {
+      this.playbackPosition = Number(position) || 0;
+      this.playbackPositionChanged.emit(this.playbackPosition, mockAudio().durationMs);
+      callback(JSON.stringify({ ok: true, positionMs: this.playbackPosition }));
+    }
     setWindowTheme() {}
     minimizeWindow() {}
     toggleMaximize() { this.windowStateChanged.emit(false); }
@@ -249,7 +296,7 @@
     elements.statusDot.className = `status-dot is-${mode}`;
     if (progress !== null) {
       state.progress = Math.max(0, Math.min(100, Number(progress)));
-      elements.progressFill.style.width = `${state.progress}%`;
+      elements.progressFill.style.transform = `scaleX(${state.progress / 100})`;
       window.fluidBackground?.setProgress(state.progress);
     }
   }
@@ -301,6 +348,94 @@
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
   }
 
+  function updatePlaybackUi() {
+    const hasAudio = Boolean(state.audio);
+    const duration = state.playbackDurationMs || state.audio?.durationMs || 0;
+    const position = Math.max(0, Math.min(state.playbackPositionMs, duration));
+    const playing = state.playbackState === "playing";
+    elements.playPauseButton.disabled = !hasAudio;
+    elements.stopButton.disabled = !hasAudio;
+    elements.previewCutButton.disabled = !hasAudio;
+    elements.playPauseButton.classList.toggle("is-playing", playing);
+    elements.playPauseButton.setAttribute("aria-label", playing ? "暂停" : "播放");
+    elements.playPauseButton.title = playing ? "暂停" : "从播放头开始播放";
+    elements.playbackCurrent.textContent = formatDuration(position);
+    elements.playbackTotal.textContent = hasAudio ? formatDuration(duration) : "--:--.---";
+    elements.playbackHead.hidden = !hasAudio;
+    elements.waveformStage.classList.toggle("is-playing", playing);
+    if (hasAudio && duration > 0) {
+      const width = elements.waveformStage.clientWidth;
+      const plotWidth = Math.max(1, width - 56);
+      const headX = 44 + plotWidth * (position / duration);
+      elements.playbackHead.style.transform = `translateX(${headX}px)`;
+      elements.waveformStage.setAttribute(
+        "aria-label",
+        `音频波形，播放位置 ${formatDuration(position)}，可拖动定位`,
+      );
+    }
+  }
+
+  function playbackPositionFromPointer(event) {
+    if (!state.audio) return 0;
+    const rect = elements.waveformStage.getBoundingClientRect();
+    const x = Math.max(44, Math.min(rect.width - 12, event.clientX - rect.left));
+    const ratio = (x - 44) / Math.max(1, rect.width - 56);
+    return Math.round(ratio * state.audio.durationMs);
+  }
+
+  function setLocalPlaybackPosition(positionMs) {
+    const duration = state.audio?.durationMs || state.playbackDurationMs || 0;
+    state.playbackPositionMs = Math.max(0, Math.min(Number(positionMs) || 0, duration));
+    updatePlaybackUi();
+  }
+
+  function finishPlaybackScrub(event) {
+    if (!state.scrubbing) return;
+    state.scrubbing = false;
+    if (event?.pointerId !== undefined && elements.waveformStage.hasPointerCapture(event.pointerId)) {
+      elements.waveformStage.releasePointerCapture(event.pointerId);
+    }
+    seekPlayback(state.playbackPositionMs);
+  }
+
+  async function seekPlayback(positionMs) {
+    setLocalPlaybackPosition(positionMs);
+    try {
+      await callBackend("seekPlayback", Math.round(state.playbackPositionMs));
+    } catch (error) {
+      showToast("无法定位播放位置", error.message, true);
+    }
+  }
+
+  async function togglePlayback() {
+    if (!state.audio) return;
+    try {
+      if (state.playbackState === "playing") {
+        await callBackend("pausePlayback");
+      } else {
+        const duration = state.audio.durationMs;
+        const start = state.playbackPositionMs >= duration - 1 ? 0 : state.playbackPositionMs;
+        setLocalPlaybackPosition(start);
+        await callBackend("playFrom", Math.round(start));
+      }
+    } catch (error) {
+      showToast("无法播放", error.message, true);
+    }
+  }
+
+  async function previewFromCut() {
+    if (!state.audio) return;
+    const cutPosition = state.action === "trim"
+      ? Math.min(state.audio.durationMs - 1, Math.round(currentOffsetSeconds() * 1000))
+      : 0;
+    setLocalPlaybackPosition(cutPosition);
+    try {
+      await callBackend("playFrom", cutPosition);
+    } catch (error) {
+      showToast("无法试听", error.message, true);
+    }
+  }
+
   function formatBytes(bytes) {
     if (!Number.isFinite(bytes) || bytes <= 0) return "--";
     if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
@@ -332,6 +467,9 @@
   function initializeControls(config) {
     state.config = config;
     document.documentElement.dataset.platform = config.platform || "windows";
+    document.documentElement.classList.toggle("is-maximized", Boolean(config.maximized));
+    elements.maximizeButton.title = config.maximized ? "还原" : "最大化";
+    elements.maximizeButton.setAttribute("aria-label", config.maximized ? "还原" : "最大化");
     setSelectOptions(elements.sampleRate, config.sampleRates, (value) => `${Number(value).toLocaleString()} Hz`, 44100);
     setSelectOptions(elements.channels, config.channels, channelLabel, 2);
     setSelectOptions(elements.bitDepth, config.bitDepths, (value) => `${value}-bit`, 16);
@@ -473,6 +611,9 @@
   function applyAudio(data) {
     state.audio = data;
     state.bpm = null;
+    state.playbackState = "stopped";
+    state.playbackPositionMs = 0;
+    state.playbackDurationMs = data.durationMs;
     const metadata = `${data.sourceFormat.toUpperCase()} · ${Number(data.sampleRate).toLocaleString()} Hz · ${channelLabel(data.channels)} · ${data.bitDepth}-bit · ${data.bitrateKbps} kbps · ${formatDuration(data.durationMs)}`;
     elements.fileName.textContent = data.name;
     elements.fileMeta.textContent = metadata;
@@ -523,6 +664,7 @@
     renderConverterWaveform();
     updateDerivedState();
     updateConverterState();
+    updatePlaybackUi();
     setStatus(`已载入 ${data.name}`, "ready", 0);
   }
 
@@ -907,6 +1049,22 @@
     backend.windowStateChanged.connect((maximized) => {
       elements.maximizeButton.title = maximized ? "还原" : "最大化";
       elements.maximizeButton.setAttribute("aria-label", maximized ? "还原" : "最大化");
+      document.documentElement.classList.toggle("is-maximized", Boolean(maximized));
+    });
+    backend.playbackChanged.connect((playbackState) => {
+      state.playbackState = playbackState;
+      updatePlaybackUi();
+    });
+    backend.playbackPositionChanged.connect((positionMs, durationMs) => {
+      if (state.scrubbing) return;
+      state.playbackPositionMs = Number(positionMs) || 0;
+      state.playbackDurationMs = Number(durationMs) || state.audio?.durationMs || 0;
+      updatePlaybackUi();
+    });
+    backend.playbackFailed.connect((message) => {
+      state.playbackState = "stopped";
+      updatePlaybackUi();
+      showToast("播放失败", message, true);
     });
     backend.notice.connect((title, message) => showToast(title, message, true));
   }
@@ -948,12 +1106,40 @@
   elements.converterImportButton.addEventListener("click", browseAudio);
   elements.offsetTaskTab.addEventListener("click", () => selectTool("offset"));
   elements.convertTaskTab.addEventListener("click", () => selectTool("convert"));
-  elements.waveformStage.addEventListener("click", () => {
+  elements.waveformStage.addEventListener("click", (event) => {
     if (!state.audio) browseAudio();
+    else if (!state.scrubbing) seekPlayback(playbackPositionFromPointer(event));
   });
   elements.waveformStage.addEventListener("keydown", (event) => {
-    if (!state.audio && (event.key === "Enter" || event.key === " ")) browseAudio();
+    if (!state.audio && (event.key === "Enter" || event.key === " ")) {
+      browseAudio();
+      return;
+    }
+    if (!state.audio) return;
+    if (event.key === " ") {
+      event.preventDefault();
+      togglePlayback();
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      const direction = event.key === "ArrowLeft" ? -1 : 1;
+      seekPlayback(state.playbackPositionMs + direction * (event.shiftKey ? 10000 : 1000));
+    }
   });
+  elements.waveformStage.addEventListener("pointerdown", (event) => {
+    if (!state.audio || event.button !== 0) return;
+    state.scrubbing = true;
+    elements.waveformStage.setPointerCapture(event.pointerId);
+    setLocalPlaybackPosition(playbackPositionFromPointer(event));
+  });
+  elements.waveformStage.addEventListener("pointermove", (event) => {
+    if (!state.scrubbing) return;
+    setLocalPlaybackPosition(playbackPositionFromPointer(event));
+  });
+  elements.waveformStage.addEventListener("pointerup", (event) => {
+    finishPlaybackScrub(event);
+  });
+  elements.waveformStage.addEventListener("pointercancel", finishPlaybackScrub);
+  elements.waveformStage.addEventListener("lostpointercapture", finishPlaybackScrub);
   elements.converterStage.addEventListener("click", () => {
     if (!state.audio) browseAudio();
   });
@@ -991,6 +1177,9 @@
   [elements.sampleRate, elements.channels, elements.bitDepth, elements.bitrate].forEach((element) => element.addEventListener("change", updateDerivedState));
   elements.format.addEventListener("change", () => refreshFormatControls());
   elements.antiClick.addEventListener("change", updateDerivedState);
+  elements.playPauseButton.addEventListener("click", togglePlayback);
+  elements.stopButton.addEventListener("click", () => callBackend("stopPlayback").catch((error) => showToast("无法停止", error.message, true)));
+  elements.previewCutButton.addEventListener("click", previewFromCut);
   elements.exportButton.addEventListener("click", startExport);
   elements.convertButton.addEventListener("click", startConversion);
   elements.converterFormat.addEventListener("change", () => refreshConverterFormatControls());
@@ -1041,6 +1230,7 @@
   const resizeObserver = new ResizeObserver(() => {
     renderWaveform();
     renderConverterWaveform();
+    updatePlaybackUi();
   });
   resizeObserver.observe(elements.waveformStage);
   resizeObserver.observe(elements.converterStage);

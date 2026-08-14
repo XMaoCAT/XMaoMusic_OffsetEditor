@@ -9,6 +9,7 @@ core_binary = project_root / "Core0" / "ncm-core"
 datas = [(str(project_root / "ui"), "ui")]
 binaries = [(str(core_binary), "Core0")]
 hiddenimports = []
+hiddenimports += ["PySide6.QtMultimedia"]
 
 for package in ("librosa", "sklearn", "numba", "llvmlite", "soundfile", "scipy", "imageio_ffmpeg", "Crypto"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
@@ -62,7 +63,8 @@ app = BUNDLE(
     bundle_identifier="com.xmaocat.xmaomusic-offseteditor",
     info_plist={
         "CFBundleDisplayName": "XMaoMusic OffsetEditor",
-        "CFBundleShortVersionString": "1.0.0",
+        "CFBundleShortVersionString": "1.1.0",
+        "CFBundleVersion": "1.1.0",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,
     },

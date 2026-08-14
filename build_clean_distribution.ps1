@@ -33,6 +33,7 @@ function Copy-CommonProject {
         "README.md",
         "PLATFORMS.md",
         "PRODUCT.md",
+        "DESIGN.md",
         "THIRD_PARTY_NOTICES.md"
     )
     foreach ($name in $commonFiles) {

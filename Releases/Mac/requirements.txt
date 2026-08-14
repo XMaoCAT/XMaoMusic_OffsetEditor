@@ -1,4 +1,4 @@
-PySide6==6.8.1
+PySide6==6.11.1
 pydub==0.25.1
 imageio-ffmpeg==0.6.0
 librosa==0.11.0
