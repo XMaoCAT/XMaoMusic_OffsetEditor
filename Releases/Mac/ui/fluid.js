@@ -39,10 +39,10 @@
     resizeCanvas();
     const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
     const light = state.theme === "light";
-    gradient.addColorStop(0, light ? "#d7edf0" : "#102f3a");
-    gradient.addColorStop(0.46, light ? "#eef5f6" : "#071014");
-    gradient.addColorStop(0.78, light ? "#bddbe3" : "#16486a");
-    gradient.addColorStop(1, light ? "#ead6d3" : "#4e2527");
+    gradient.addColorStop(0, light ? "#d8ecff" : "#05040a");
+    gradient.addColorStop(0.46, light ? "#f8fbff" : "#0a0712");
+    gradient.addColorStop(0.78, light ? "#b9d9f6" : "#281342");
+    gradient.addColorStop(1, light ? "#edf7ff" : "#4a1f68");
     context.fillStyle = gradient;
     context.fillRect(0, 0, canvas.width, canvas.height);
   }
@@ -115,25 +115,25 @@
       float bands = sin((p.x * 2.4 + p.y * 1.4 + warpA * 1.8 + warpB) * 3.0 - t * 1.2);
       bands = smoothstep(-0.82, 0.92, bands);
 
-      vec3 darkBase = vec3(0.018, 0.052, 0.066);
-      vec3 darkDeep = vec3(0.025, 0.145, 0.205);
-      vec3 darkCyan = vec3(0.08, 0.52, 0.62);
-      vec3 darkCoral = vec3(0.54, 0.14, 0.12);
-      vec3 lightBase = vec3(0.87, 0.93, 0.94);
-      vec3 lightDeep = vec3(0.67, 0.82, 0.85);
-      vec3 lightCyan = vec3(0.22, 0.64, 0.67);
-      vec3 lightCoral = vec3(0.78, 0.48, 0.44);
+      vec3 darkBase = vec3(0.012, 0.009, 0.022);
+      vec3 darkDeep = vec3(0.075, 0.026, 0.135);
+      vec3 darkCyan = vec3(0.32, 0.09, 0.48);
+      vec3 darkMist = vec3(0.58, 0.25, 0.72);
+      vec3 lightBase = vec3(0.94, 0.975, 1.0);
+      vec3 lightDeep = vec3(0.68, 0.84, 0.97);
+      vec3 lightCyan = vec3(0.24, 0.58, 0.91);
+      vec3 lightMist = vec3(0.99, 0.995, 1.0);
       vec3 base = mix(darkBase, lightBase, themeMix);
       vec3 deep = mix(darkDeep, lightDeep, themeMix);
       vec3 cyan = mix(darkCyan, lightCyan, themeMix);
-      vec3 coral = mix(darkCoral, lightCoral, themeMix);
+      vec3 mist = mix(darkMist, lightMist, themeMix);
       float field = clamp(warpA * 0.58 + warpB * 0.52 + bands * 0.25, 0.0, 1.0);
       vec3 color = mix(base, deep, field);
       color = mix(color, cyan, smoothstep(0.57, 1.04, field) * (0.24 + energy * 0.16));
 
-      float coralField = smoothstep(0.34, 0.02, distance(uv, vec2(0.02, 0.88)));
-      coralField *= smoothstep(0.25, 0.82, warpB) * 0.42;
-      color = mix(color, coral, coralField);
+      float mistField = smoothstep(0.2, 0.88, warpB + warpA * 0.34);
+      mistField *= smoothstep(0.86, 0.18, distance(uv, vec2(0.18, 0.82)));
+      color = mix(color, mist, mistField * mix(0.2, 0.36, themeMix));
 
       float vignette = smoothstep(0.96, 0.25, length(p * vec2(0.7, 1.0)));
       color *= mix(0.6 + vignette * 0.42, 0.88 + vignette * 0.14, themeMix);

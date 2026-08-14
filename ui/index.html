@@ -1,4 +1,9 @@
 <!doctype html>
+<!--
+  Design contract: a precise desktop audio workbench with restrained liquid-glass
+  depth. The waveform and its red playback head lead; cyan marks editing state.
+  Glass separates tool zones without nested decorative cards or reduced legibility.
+-->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -77,6 +82,10 @@
 
         <div class="waveform-stage is-empty" id="waveformStage" tabindex="0" role="button" aria-label="拖放音频或点击导入">
           <canvas id="waveformCanvas" aria-label="音频波形"></canvas>
+          <div class="playback-head" id="playbackHead" hidden aria-hidden="true">
+            <span class="playback-head-grip"></span>
+            <span class="playback-head-line"></span>
+          </div>
           <div class="empty-state" id="emptyState">
             <span class="empty-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M3 12h3l2-7 4 14 3-10 2 6h4"/></svg>
@@ -88,6 +97,28 @@
             <span class="loading-ring" aria-hidden="true"></span>
             <strong>正在分析音频</strong>
           </div>
+        </div>
+
+        <div class="playback-transport" aria-label="音频试听控制">
+          <div class="transport-buttons">
+            <button class="transport-button transport-primary" id="playPauseButton" type="button" disabled aria-label="播放" title="播放或暂停">
+              <svg class="play-icon" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></svg>
+              <svg class="pause-icon" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
+            </button>
+            <button class="transport-button" id="stopButton" type="button" disabled aria-label="停止" title="停止播放">
+              <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+            </button>
+          </div>
+          <div class="playback-clock" aria-live="off">
+            <strong id="playbackCurrent">00:00.000</strong>
+            <span>/</span>
+            <span id="playbackTotal">--:--.---</span>
+          </div>
+          <div class="transport-spacer"></div>
+          <button class="preview-button" id="previewCutButton" type="button" disabled>
+            <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/><path d="M4 5v14"/></svg>
+            <span>从剪切点试听</span>
+          </button>
         </div>
 
         <div class="operation-panel">

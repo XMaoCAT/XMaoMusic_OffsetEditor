@@ -169,7 +169,7 @@ function Download-FileWithProgress {
 function Test-Python {
     param([string]$PythonExe)
     if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) { return $false }
-    & $PythonExe -c "import struct,sys; ok=(3,9)<=sys.version_info[:2]<(3,14) and struct.calcsize('P')==8; raise SystemExit(0 if ok else 1)" 2>$null
+    & $PythonExe -c "import struct,sys; ok=(3,10)<=sys.version_info[:2]<(3,14) and struct.calcsize('P')==8; raise SystemExit(0 if ok else 1)" 2>$null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -179,13 +179,12 @@ function Find-SystemPython {
         [PSCustomObject]@{ Command = "py"; Arguments = @("-3.13") },
         [PSCustomObject]@{ Command = "py"; Arguments = @("-3.12") },
         [PSCustomObject]@{ Command = "py"; Arguments = @("-3.11") },
-        [PSCustomObject]@{ Command = "py"; Arguments = @("-3.10") },
-        [PSCustomObject]@{ Command = "py"; Arguments = @("-3.9") }
+        [PSCustomObject]@{ Command = "py"; Arguments = @("-3.10") }
     )
 
     foreach ($candidate in $candidates) {
         if (-not (Get-Command $candidate.Command -ErrorAction SilentlyContinue)) { continue }
-        $probe = "import struct,sys; ok=(3,9)<=sys.version_info[:2]<(3,14) and struct.calcsize('P')==8; print(sys.executable) if ok else None; raise SystemExit(0 if ok else 1)"
+        $probe = "import struct,sys; ok=(3,10)<=sys.version_info[:2]<(3,14) and struct.calcsize('P')==8; print(sys.executable) if ok else None; raise SystemExit(0 if ok else 1)"
         $output = & $candidate.Command @($candidate.Arguments) -c $probe 2>$null
         if ($LASTEXITCODE -eq 0 -and $output) {
             $resolved = [string]($output | Select-Object -Last 1)
