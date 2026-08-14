@@ -78,16 +78,21 @@ powershell -ExecutionPolicy Bypass -File .\build_clean_distribution.ps1
 
 ## macOS
 
-macOS 源码版入口为 `Mac/Start.command`。首次运行会检查 Python 与 FFmpeg；缺失时显示下载进度，并优先使用清华、北外和南京大学镜像。详细说明见 `Mac/README.md`。
+源码仓库中的 macOS 入口为 `Mac/Start.command`；`纯净版/Mac` 独立目录中的入口为根部 `Start.command`。首次运行会检查 Python 与 FFmpeg；缺失时显示下载进度，并优先使用清华、北外和南京大学镜像。详细说明见 `Mac/README.md`，纯净版内对应 `README-macOS.md`。
 
 DMG 必须在 macOS 上构建：
 
 ```bash
+# 源码仓库布局
 chmod +x Mac/Start.command Mac/bootstrap_macos.sh Mac/build_dmg.sh
 ./Mac/build_dmg.sh
+
+# 纯净版/Mac 独立目录布局
+chmod +x Start.command bootstrap_macos.sh build_dmg.sh
+./build_dmg.sh
 ```
 
-Apple Silicon 输出 `Mac/XMaoMusic-OffsetEditor-macOS-arm64.dmg`，Intel 输出 `Mac/XMaoMusic-OffsetEditor-macOS-x86_64.dmg`。两种架构需分别在对应架构的 Mac 上构建。Windows 无法生成有效的 macOS `.app` 或 DMG；未签名构建仅适合本机测试，公开分发还需要 Apple Developer ID 签名和公证。
+Apple Silicon 输出 `XMaoMusic-OffsetEditor-macOS-arm64.dmg`，Intel 输出 `XMaoMusic-OffsetEditor-macOS-x86_64.dmg`，文件位于构建脚本所在目录。两种架构需分别在对应架构的 Mac 上构建。Windows 无法生成有效的 macOS `.app` 或 DMG；未签名构建仅适合本机测试，公开分发还需要 Apple Developer ID 签名和公证。
 
 ## 手动启动
 
