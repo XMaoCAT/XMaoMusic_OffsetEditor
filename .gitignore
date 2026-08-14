@@ -6,6 +6,7 @@ __pycache__/
 # Local deps / env
 _deps/
 .venv/
+.runtime/
 venv/
 env/
 
@@ -15,6 +16,9 @@ Output/
 build/
 dist/
 *.spec
+!Mac/XMaoMusic-macos.spec
+!纯净版/Mac/XMaoMusic-macos.spec
+Core0/ncm-core
 
 # OS/editor
 .DS_Store
