@@ -57,6 +57,11 @@
   --wave-primary: rgba(104, 227, 232, 0.86);
   --wave-secondary: rgba(82, 196, 218, 0.78);
   --timeline-fill: rgba(59, 130, 246, 0.18);
+  --bpm-segment-a: rgba(104, 227, 232, 0.14);
+  --bpm-segment-b: rgba(104, 227, 232, 0.075);
+  --bpm-segment-line: rgba(104, 227, 232, 0.58);
+  --bpm-segment-label: #dffbfd;
+  --bpm-unmeasured: rgba(6, 4, 11, 0.4);
   --playhead-red: #ff5c62;
   --playhead-shadow: rgba(255, 72, 82, 0.34);
   --radius-panel: 6px;
@@ -126,6 +131,11 @@
   --wave-primary: rgba(5, 133, 143, 0.8);
   --wave-secondary: rgba(39, 120, 165, 0.7);
   --timeline-fill: rgba(37, 99, 235, 0.14);
+  --bpm-segment-a: rgba(8, 127, 134, 0.13);
+  --bpm-segment-b: rgba(8, 127, 134, 0.065);
+  --bpm-segment-line: rgba(8, 127, 134, 0.54);
+  --bpm-segment-label: #064f55;
+  --bpm-unmeasured: rgba(196, 211, 215, 0.36);
   --playhead-red: #d92f3f;
   --playhead-shadow: rgba(196, 33, 51, 0.22);
 }
@@ -1575,7 +1585,7 @@ option {
 }
 
 .bpm-dialog {
-  width: min(560px, calc(100vw - 40px));
+  width: min(680px, calc(100vw - 40px));
   max-height: min(760px, calc(100vh - 40px));
   padding: 20px;
   overflow: auto;
@@ -1664,6 +1674,66 @@ option {
   transform: scaleX(0);
   transform-origin: left center;
   transition: transform 180ms linear;
+}
+
+.bpm-waveform-result {
+  display: grid;
+  margin: 0 0 16px;
+  gap: 8px;
+}
+
+.bpm-waveform-heading,
+.bpm-waveform-result figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bpm-waveform-heading strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.bpm-waveform-heading span,
+.bpm-waveform-result figcaption {
+  color: var(--frost-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+#bpmWaveformCanvas {
+  display: block;
+  width: 100%;
+  height: 172px;
+  background: var(--control-bg);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+}
+
+.bpm-waveform-result figcaption {
+  justify-content: flex-start;
+  margin: 0;
+}
+
+.bpm-waveform-result figcaption span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.bpm-waveform-result figcaption i {
+  display: inline-block;
+  width: 12px;
+  height: 6px;
+  background: var(--bpm-segment-a);
+  border: 1px solid var(--bpm-segment-line);
+  border-radius: 2px;
+}
+
+.bpm-waveform-result figcaption i.is-unmeasured {
+  background: var(--bpm-unmeasured);
+  border-color: var(--line-soft);
 }
 
 .bpm-primary-result {
@@ -1764,6 +1834,21 @@ option {
 
 .bpm-dialog-actions {
   margin-top: 18px;
+}
+
+@media (max-width: 620px) {
+  .bpm-dialog {
+    width: calc(100vw - 24px);
+    padding: 16px;
+  }
+
+  #bpmWaveformCanvas {
+    height: 150px;
+  }
+
+  .bpm-result-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 [hidden] {

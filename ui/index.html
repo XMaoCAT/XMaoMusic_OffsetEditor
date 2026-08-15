@@ -434,8 +434,19 @@
     </section>
 
     <section class="bpm-results" id="bpmResults" hidden aria-live="polite">
+      <figure class="bpm-waveform-result">
+        <div class="bpm-waveform-heading">
+          <strong>分段 BPM</strong>
+          <span id="bpmWaveformRange">--</span>
+        </div>
+        <canvas id="bpmWaveformCanvas" role="img" aria-label="音频波形上的分段 BPM"></canvas>
+        <figcaption>
+          <span><i class="is-analyzed"></i>已分析区间</span>
+          <span><i class="is-unmeasured"></i>未分析区间</span>
+        </figcaption>
+      </figure>
       <div class="bpm-primary-result">
-        <span>估计 BPM</span>
+        <span>时长加权平均 BPM</span>
         <strong id="bpmResultValue">--.-</strong>
         <small id="bpmResultConfidence">--</small>
       </div>

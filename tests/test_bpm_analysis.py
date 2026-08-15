@@ -27,9 +27,12 @@ class BpmAnalysisTests(unittest.TestCase):
         result = analyze_bpm_samples(click_track(((128.0, 42.0),)), SAMPLE_RATE)
 
         self.assertAlmostEqual(result["bpm"], 128.0, delta=0.7)
+        self.assertAlmostEqual(result["averageBpm"], 128.0, delta=0.7)
         self.assertFalse(result["isVariableTempo"])
         self.assertGreaterEqual(result["confidence"], 65)
         self.assertGreater(result["beatCount"], 60)
+        self.assertEqual(result["segments"][0]["startMs"], result["activeStartMs"])
+        self.assertEqual(result["segments"][-1]["endMs"], result["analysisEndMs"])
 
     def test_double_time_is_normalized_to_primary_beat_layer(self) -> None:
         result = analyze_bpm_samples(click_track(((240.0, 42.0),)), SAMPLE_RATE)
@@ -44,6 +47,15 @@ class BpmAnalysisTests(unittest.TestCase):
         self.assertTrue(result["isVariableTempo"])
         self.assertTrue(any(abs(value - 120.0) < 1.0 for value in section_bpms))
         self.assertTrue(any(abs(value - 150.0) < 1.0 for value in section_bpms))
+        for left, right in zip(result["segments"], result["segments"][1:]):
+            self.assertEqual(left["endMs"], right["startMs"])
+        durations = [section["endMs"] - section["startMs"] for section in result["segments"]]
+        expected_average = sum(
+            section["bpm"] * duration for section, duration in zip(result["segments"], durations)
+        ) / sum(durations)
+        self.assertAlmostEqual(result["averageBpm"], expected_average, places=2)
+        self.assertAlmostEqual(result["minimumBpm"], min(section_bpms), places=2)
+        self.assertAlmostEqual(result["maximumBpm"], max(section_bpms), places=2)
 
     def test_short_audio_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
