@@ -47,8 +47,9 @@ decorative illustration.
   are serialized to protect the source file and Qt lifecycle.
 - BPM analysis starts only from its dedicated command after import. Its dialog
   exposes decoding, feature extraction, segment analysis, and result stages;
-  it then reports an estimated BPM, confidence, local tempo sections, and
-  half/double-time candidates rather than presenting one unexplained value.
+  it then marks contiguous local tempo sections directly on a result waveform
+  and reports their duration-weighted average, confidence, and half/double-time
+  candidates rather than presenting one unexplained value.
 
 ## Layout Contract
 

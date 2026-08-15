@@ -85,6 +85,8 @@
     bpmProgressValue: $("#bpmProgressValue"),
     bpmProgressFill: $("#bpmProgressFill"),
     bpmResults: $("#bpmResults"),
+    bpmWaveformCanvas: $("#bpmWaveformCanvas"),
+    bpmWaveformRange: $("#bpmWaveformRange"),
     bpmResultValue: $("#bpmResultValue"),
     bpmResultConfidence: $("#bpmResultConfidence"),
     bpmResultDuration: $("#bpmResultDuration"),
@@ -262,12 +264,23 @@
           clearInterval(timer);
           this.bpmDetected.emit(JSON.stringify({
             bpm: 174.18,
+            averageBpm: 174.51,
+            averageConfidence: 89,
+            minimumBpm: 172.8,
+            maximumBpm: 176.2,
             confidence: 91,
             beatCount: 882,
             analysisDurationMs: 180000,
-            segmentCount: 5,
-            isVariableTempo: false,
-            segments: [{ startMs: 4200, endMs: 177800, bpm: 174.18, confidence: 96, beatCount: 882 }],
+            activeStartMs: 4200,
+            analysisEndMs: 177800,
+            segmentCount: 3,
+            sampleWindowCount: 5,
+            isVariableTempo: true,
+            segments: [
+              { startMs: 4200, endMs: 60000, bpm: 172.8, confidence: 87, beatCount: 278 },
+              { startMs: 60000, endMs: 120000, bpm: 176.2, confidence: 91, beatCount: 302 },
+              { startMs: 120000, endMs: 177800, bpm: 174.4, confidence: 88, beatCount: 302 },
+            ],
             candidates: [{ bpm: 174.18, label: "推荐拍层" }, { bpm: 87.09, label: "半速候选" }],
             method: "多片段节拍回归",
           }));
@@ -357,6 +370,7 @@
     requestAnimationFrame(() => {
       renderWaveform();
       renderConverterWaveform();
+      renderBpmWaveform();
     });
   }
 
@@ -411,6 +425,9 @@
     elements.bpmSegmentList.replaceChildren();
     elements.bpmCandidateList.replaceChildren();
     elements.bpmResultNote.textContent = "";
+    elements.bpmWaveformRange.textContent = "--";
+    const context = elements.bpmWaveformCanvas.getContext("2d");
+    context.clearRect(0, 0, elements.bpmWaveformCanvas.width, elements.bpmWaveformCanvas.height);
     elements.bpmDismissButton.disabled = true;
     setBpmProgress(0, "正在准备分析");
   }
@@ -425,19 +442,167 @@
     return row;
   }
 
+  function bpmSummary(result) {
+    const segments = (result.segments || [])
+      .map((segment) => ({
+        ...segment,
+        startMs: Number(segment.startMs) || 0,
+        endMs: Number(segment.endMs) || 0,
+        bpm: Number(segment.bpm) || 0,
+        confidence: Math.max(0, Math.min(100, Number(segment.confidence) || 0)),
+      }))
+      .filter((segment) => segment.endMs > segment.startMs && segment.bpm > 0)
+      .sort((left, right) => left.startMs - right.startMs);
+    const weightedDuration = segments.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0);
+    const weightedBpm = weightedDuration
+      ? segments.reduce((sum, segment) => sum + segment.bpm * (segment.endMs - segment.startMs), 0) / weightedDuration
+      : Number(result.bpm) || 0;
+    const weightedConfidence = weightedDuration
+      ? segments.reduce((sum, segment) => sum + segment.confidence * (segment.endMs - segment.startMs), 0) / weightedDuration
+      : Number(result.confidence) || 0;
+    const tempi = segments.map((segment) => segment.bpm);
+    const fallbackBpm = Number(result.bpm) || 0;
+    return {
+      segments,
+      averageBpm: Number(result.averageBpm) || weightedBpm,
+      averageConfidence: Number.isFinite(Number(result.averageConfidence))
+        ? Number(result.averageConfidence)
+        : weightedConfidence,
+      minimumBpm: Number(result.minimumBpm) || (tempi.length ? Math.min(...tempi) : fallbackBpm),
+      maximumBpm: Number(result.maximumBpm) || (tempi.length ? Math.max(...tempi) : fallbackBpm),
+    };
+  }
+
+  function renderBpmWaveform() {
+    const canvas = elements.bpmWaveformCanvas;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return;
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.floor(rect.width * scale));
+    const height = Math.max(1, Math.floor(rect.height * scale));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, width, height);
+    if (!state.audio?.waveform || !state.bpm) return;
+
+    const summary = bpmSummary(state.bpm);
+    const duration = Math.max(1, Number(state.audio.durationMs) || Number(state.bpm.analysisEndMs) || 1);
+    const left = 42 * scale;
+    const right = 12 * scale;
+    const top = 28 * scale;
+    const bottom = 22 * scale;
+    const plotWidth = Math.max(1, width - left - right);
+    const plotHeight = Math.max(1, height - top - bottom);
+    const channelHeight = plotHeight / 2;
+
+    context.fillStyle = themeColor("--bpm-unmeasured");
+    context.fillRect(left, top, plotWidth, plotHeight);
+    summary.segments.forEach((segment, index) => {
+      const startRatio = Math.max(0, Math.min(1, segment.startMs / duration));
+      const endRatio = Math.max(startRatio, Math.min(1, segment.endMs / duration));
+      const startX = left + plotWidth * startRatio;
+      const endX = left + plotWidth * endRatio;
+      context.fillStyle = themeColor(index % 2 ? "--bpm-segment-b" : "--bpm-segment-a");
+      context.fillRect(startX, top, Math.max(1, endX - startX), plotHeight);
+    });
+
+    context.strokeStyle = themeColor("--wave-grid");
+    context.lineWidth = Math.max(1, scale * 0.6);
+    for (let line = 0; line <= 8; line += 1) {
+      const x = left + plotWidth * (line / 8);
+      context.beginPath();
+      context.moveTo(x, top);
+      context.lineTo(x, height - bottom);
+      context.stroke();
+    }
+    context.beginPath();
+    context.moveTo(left, top + channelHeight);
+    context.lineTo(width - right, top + channelHeight);
+    context.stroke();
+
+    state.audio.waveform.slice(0, 2).forEach((peaks, channel) => {
+      const centerY = top + channelHeight * (channel + 0.5);
+      const amplitude = channelHeight * 0.35;
+      context.beginPath();
+      peaks.forEach((peak, index) => {
+        const x = left + plotWidth * (index / Math.max(1, peaks.length - 1));
+        const y = centerY - peak * amplitude;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      for (let index = peaks.length - 1; index >= 0; index -= 1) {
+        const x = left + plotWidth * (index / Math.max(1, peaks.length - 1));
+        context.lineTo(x, centerY + peaks[index] * amplitude);
+      }
+      context.closePath();
+      context.fillStyle = themeColor(channel === 0 ? "--wave-primary" : "--wave-secondary");
+      context.fill();
+    });
+
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.font = `600 ${10 * scale}px "Segoe UI", sans-serif`;
+    summary.segments.forEach((segment, index) => {
+      const startX = left + plotWidth * Math.max(0, Math.min(1, segment.startMs / duration));
+      const endX = left + plotWidth * Math.max(0, Math.min(1, segment.endMs / duration));
+      const segmentWidth = Math.max(0, endX - startX);
+      const fullLabel = `${segment.bpm.toFixed(1)} BPM`;
+      const compactLabel = `${Math.round(segment.bpm)}`;
+      const fullWidth = context.measureText(fullLabel).width + 12 * scale;
+      const compactWidth = context.measureText(compactLabel).width + 8 * scale;
+      const label = segmentWidth >= fullWidth ? fullLabel : segmentWidth >= compactWidth ? compactLabel : "";
+      context.strokeStyle = themeColor("--bpm-segment-line");
+      context.lineWidth = Math.max(1, scale);
+      context.beginPath();
+      context.moveTo(startX, top);
+      context.lineTo(startX, height - bottom);
+      context.stroke();
+      if (label) {
+        context.fillStyle = themeColor("--bpm-segment-label");
+        context.fillText(label, startX + segmentWidth / 2, top + 12 * scale);
+      }
+      if (index === summary.segments.length - 1) {
+        context.beginPath();
+        context.moveTo(endX, top);
+        context.lineTo(endX, height - bottom);
+        context.stroke();
+      }
+    });
+
+    context.fillStyle = themeColor("--wave-label");
+    context.font = `${9 * scale}px "Segoe UI", sans-serif`;
+    context.textBaseline = "alphabetic";
+    for (let line = 0; line <= 4; line += 1) {
+      const fraction = line / 4;
+      context.fillText(formatDuration(duration * fraction).slice(0, 5), left + plotWidth * fraction, height - 6 * scale);
+    }
+    context.textAlign = "right";
+    context.fillText("L", 28 * scale, top + channelHeight * 0.55);
+    context.fillText("R", 28 * scale, top + channelHeight * 1.55);
+    canvas.setAttribute(
+      "aria-label",
+      summary.segments.map((segment) => `${formatBpmRange(segment.startMs)} 到 ${formatBpmRange(segment.endMs)}，${segment.bpm.toFixed(2)} BPM`).join("；"),
+    );
+  }
+
   function renderBpmResult(result) {
     const bpm = Number(result.bpm) || 0;
     const confidence = Math.max(0, Math.min(100, Number(result.confidence) || 0));
+    const summary = bpmSummary(result);
     state.bpm = result;
     elements.bpmButtonValue.textContent = bpm ? bpm.toFixed(2) : "--.-";
     elements.bpmButtonStatus.textContent = bpm ? `${bpmConfidenceLabel(confidence)} · ${result.segmentCount || 0} 个片段` : "未检测到稳定 BPM";
-    elements.bpmResultValue.textContent = bpm ? bpm.toFixed(2) : "--.-";
-    elements.bpmResultConfidence.textContent = `${bpmConfidenceLabel(confidence)} · ${Math.round(confidence)}%`;
+    elements.bpmResultValue.textContent = summary.averageBpm ? summary.averageBpm.toFixed(2) : "--.-";
+    elements.bpmResultConfidence.textContent = `推荐拍层 ${bpm.toFixed(2)} BPM · 平均可信度 ${Math.round(summary.averageConfidence)}%`;
+    elements.bpmWaveformRange.textContent = `${summary.minimumBpm.toFixed(1)} - ${summary.maximumBpm.toFixed(1)} BPM`;
     elements.bpmResultDuration.textContent = formatBpmRange(result.analysisDurationMs);
-    elements.bpmResultSegmentCount.textContent = `${result.segmentCount || 0} 个`;
+    elements.bpmResultSegmentCount.textContent = `${summary.segments.length} 个`;
     elements.bpmResultBeatCount.textContent = Number(result.beatCount || 0).toLocaleString();
     elements.bpmSegmentList.replaceChildren();
-    (result.segments || []).forEach((segment) => {
+    summary.segments.forEach((segment) => {
       const range = `${formatBpmRange(segment.startMs)} - ${formatBpmRange(segment.endMs)}`;
       const bpmText = `${Number(segment.bpm).toFixed(2)} BPM · ${Math.round(Number(segment.confidence) || 0)}%`;
       elements.bpmSegmentList.append(resultRow(range, bpmText));
@@ -452,6 +617,7 @@
     elements.bpmProgressPanel.hidden = true;
     elements.bpmResults.hidden = false;
     elements.bpmDismissButton.disabled = false;
+    requestAnimationFrame(renderBpmWaveform);
   }
 
   async function startBpmMeasurement() {
@@ -1373,10 +1539,12 @@
   const resizeObserver = new ResizeObserver(() => {
     renderWaveform();
     renderConverterWaveform();
+    renderBpmWaveform();
     updatePlaybackUi();
   });
   resizeObserver.observe(elements.waveformStage);
   resizeObserver.observe(elements.converterStage);
+  resizeObserver.observe(elements.bpmWaveformCanvas);
   elements.motionButton.setAttribute("aria-pressed", String(window.fluidBackground?.isEnabled() ?? false));
   applyTheme(state.theme, false);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {

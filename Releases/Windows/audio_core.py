@@ -619,18 +619,58 @@ def _merge_tempo_segments(segments: list[dict]) -> list[dict]:
         previous = merged[-1]
         difference = abs(float(np.log2(segment["bpm"] / previous["bpm"])))
         if difference <= 0.028:
+            previous_duration = max(1, previous["endMs"] - previous["startMs"])
+            segment_duration = max(1, segment["endMs"] - segment["startMs"])
+            total_duration = previous_duration + segment_duration
             previous["endMs"] = max(previous["endMs"], segment["endMs"])
             previous["bpm"] = round(
-                _weighted_median(
-                    [previous["bpm"], segment["bpm"]],
-                    [previous["confidence"], segment["confidence"]],
-                ),
+                (previous["bpm"] * previous_duration + segment["bpm"] * segment_duration) / total_duration,
                 2,
             )
-            previous["confidence"] = round((previous["confidence"] + segment["confidence"]) / 2)
+            previous["confidence"] = round(
+                (previous["confidence"] * previous_duration + segment["confidence"] * segment_duration)
+                / total_duration
+            )
+            previous["beatCount"] += segment["beatCount"]
         else:
             merged.append(dict(segment))
     return merged
+
+
+def _partition_tempo_segments(
+    segments: list[dict],
+    analysis_start_ms: int,
+    analysis_end_ms: int,
+) -> list[dict]:
+    """Turn overlapping analysis windows into contiguous display sections."""
+    if not segments:
+        return []
+    ordered = sorted(segments, key=lambda item: (item["startMs"] + item["endMs"]) / 2)
+    centers = [(item["startMs"] + item["endMs"]) / 2 for item in ordered]
+    boundaries = [analysis_start_ms]
+    boundaries.extend(int(round((left + right) / 2)) for left, right in zip(centers, centers[1:]))
+    boundaries.append(analysis_end_ms)
+
+    partitioned: list[dict] = []
+    for index, item in enumerate(ordered):
+        start_ms = max(analysis_start_ms, boundaries[index])
+        end_ms = min(analysis_end_ms, max(start_ms + 1, boundaries[index + 1]))
+        partitioned.append({**item, "startMs": start_ms, "endMs": end_ms})
+    return partitioned
+
+
+def _tempo_summary(segments: list[dict]) -> tuple[float, float, float, float]:
+    import numpy as np
+
+    durations = np.asarray([max(1, item["endMs"] - item["startMs"]) for item in segments], dtype=float)
+    tempi = np.asarray([item["bpm"] for item in segments], dtype=float)
+    confidence = np.asarray([item["confidence"] for item in segments], dtype=float)
+    return (
+        float(np.average(tempi, weights=durations)),
+        float(np.average(confidence, weights=durations)),
+        float(np.min(tempi)),
+        float(np.max(tempi)),
+    )
 
 
 def analyze_bpm_samples(
@@ -762,7 +802,11 @@ def analyze_bpm_samples(
                 "beatCount": item["beatCount"],
             }
         )
-    sections = _merge_tempo_segments(result_segments)
+    analysis_start_ms = int(round(active_start_seconds * 1000))
+    analysis_end_ms = int(round((active_start_seconds + duration_seconds) * 1000))
+    partitioned_segments = _partition_tempo_segments(result_segments, analysis_start_ms, analysis_end_ms)
+    sections = _merge_tempo_segments(partitioned_segments)
+    average_bpm, average_confidence, minimum_bpm, maximum_bpm = _tempo_summary(sections)
     mean_consistency = float(np.average([item["consistency"] for item in local_results], weights=candidate_weights))
     confidence = int(round(100 * min(0.99, 0.45 * agreement + 0.35 * mean_consistency + 0.20 * margin)))
     candidates = [{"bpm": round(bpm, 2), "label": "推荐拍层"}]
@@ -773,11 +817,17 @@ def analyze_bpm_samples(
     _bpm_progress(progress_callback, 100, "BPM 分析完成")
     return {
         "bpm": round(bpm, 2),
+        "averageBpm": round(average_bpm, 2),
+        "averageConfidence": int(round(average_confidence)),
+        "minimumBpm": round(minimum_bpm, 2),
+        "maximumBpm": round(maximum_bpm, 2),
         "confidence": confidence,
         "beatCount": int(sum(item["beatCount"] for item in local_results)),
         "analysisDurationMs": int(round(duration_seconds * 1000)),
-        "activeStartMs": int(round(active_start_seconds * 1000)),
-        "segmentCount": len(local_results),
+        "activeStartMs": analysis_start_ms,
+        "analysisEndMs": analysis_end_ms,
+        "segmentCount": len(sections),
+        "sampleWindowCount": len(local_results),
         "isVariableTempo": len(sections) > 1,
         "segments": sections,
         "candidates": candidates,
