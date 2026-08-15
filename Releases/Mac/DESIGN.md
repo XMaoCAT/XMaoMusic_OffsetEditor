@@ -45,6 +45,10 @@ decorative illustration.
   commit the last safe position.
 - Switching files stops playback. Background audio analysis and encoding jobs
   are serialized to protect the source file and Qt lifecycle.
+- BPM analysis starts only from its dedicated command after import. Its dialog
+  exposes decoding, feature extraction, segment analysis, and result stages;
+  it then reports an estimated BPM, confidence, local tempo sections, and
+  half/double-time candidates rather than presenting one unexplained value.
 
 ## Layout Contract
 
