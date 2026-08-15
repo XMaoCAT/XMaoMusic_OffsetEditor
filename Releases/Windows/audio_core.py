@@ -521,16 +521,283 @@ def _decrypt_ncm_with_core(
     )
 
 
-def analyze_bpm(path: Path, maximum_seconds: int = 180) -> dict:
-    import numpy as np
-    import librosa
+BPM_ANALYSIS_SAMPLE_RATE = 22050
+BPM_ANALYSIS_HOP_LENGTH = 512
+BPM_MIN = 70.0
+BPM_MAX = 200.0
 
+
+def _bpm_progress(callback: Optional[Callable[[int, str], None]], value: int, message: str) -> None:
+    if callback:
+        callback(max(0, min(100, int(value))), message)
+
+
+def _check_bpm_cancelled(cancel_callback: Optional[Callable[[], bool]]) -> None:
+    if cancel_callback and cancel_callback():
+        raise RuntimeError("BPM 分析已取消。")
+
+
+def _normalize_bpm(value: float) -> float:
+    """Keep the reported beat layer in a practical charting range."""
+    bpm = float(value)
+    while bpm > BPM_MAX:
+        bpm /= 2.0
+    while bpm < BPM_MIN:
+        bpm *= 2.0
+    return bpm
+
+
+def _weighted_median(values, weights) -> float:
+    import numpy as np
+
+    ordered = np.argsort(values)
+    sorted_values = np.asarray(values, dtype=float)[ordered]
+    sorted_weights = np.asarray(weights, dtype=float)[ordered]
+    cutoff = sorted_weights.sum() / 2.0
+    return float(sorted_values[np.searchsorted(np.cumsum(sorted_weights), cutoff)])
+
+
+def _robust_bpm_from_beats(beat_times) -> tuple[Optional[float], float, int]:
+    """Estimate tempo from beat timestamps, rejecting implausible intervals."""
+    import numpy as np
+
+    if len(beat_times) < 6:
+        return None, 0.0, 0
+    times = np.asarray(beat_times, dtype=float)
+    intervals = np.diff(times)
+    median_interval = float(np.median(intervals))
+    if not np.isfinite(median_interval) or median_interval <= 0:
+        return None, 0.0, 0
+    deviations = np.abs(intervals - median_interval)
+    mad = float(np.median(deviations))
+    tolerance = max(0.012, mad * 3.5, median_interval * 0.12)
+    valid_intervals = deviations <= tolerance
+    valid_beats = np.concatenate(([True], valid_intervals))
+    beat_indexes = np.flatnonzero(valid_beats)
+    if len(beat_indexes) < 6:
+        return None, 0.0, 0
+    slope, _intercept = np.polyfit(beat_indexes, times[valid_beats], 1)
+    if not np.isfinite(slope) or slope <= 0:
+        return None, 0.0, 0
+    consistency = (len(beat_indexes) / len(times)) * max(0.0, 1.0 - mad / max(median_interval * 0.08, 1e-6))
+    return _normalize_bpm(60.0 / float(slope)), min(1.0, consistency), int(len(beat_indexes))
+
+
+def _consensus_bpm(values, weights) -> tuple[float, float, float]:
+    """Pick the strongest tempo cluster and describe its agreement margin."""
+    import numpy as np
+
+    tempi = np.asarray([_normalize_bpm(value) for value in values], dtype=float)
+    vote_weights = np.asarray(weights, dtype=float)
+    scores = []
+    for candidate in tempi:
+        distance = np.abs(np.log2(tempi / candidate))
+        scores.append(float(np.sum(vote_weights * np.exp(-0.5 * (distance / 0.028) ** 2))))
+    order = np.argsort(scores)[::-1]
+    best_index = int(order[0])
+    best = tempi[best_index]
+    within_cluster = np.abs(np.log2(tempi / best)) <= 0.028
+    clustered = tempi[within_cluster]
+    clustered_weights = vote_weights[within_cluster]
+    bpm = _weighted_median(clustered, clustered_weights)
+    agreement = float(clustered_weights.sum() / max(vote_weights.sum(), 1e-6))
+    second_score = scores[int(order[1])] if len(order) > 1 else 0.0
+    margin = float((scores[best_index] - second_score) / max(scores[best_index], 1e-6))
+    return bpm, agreement, max(0.0, min(1.0, margin))
+
+
+def _merge_tempo_segments(segments: list[dict]) -> list[dict]:
+    import numpy as np
+
+    if not segments:
+        return []
+    merged: list[dict] = []
+    for segment in segments:
+        if not merged:
+            merged.append(dict(segment))
+            continue
+        previous = merged[-1]
+        difference = abs(float(np.log2(segment["bpm"] / previous["bpm"])))
+        if difference <= 0.028:
+            previous["endMs"] = max(previous["endMs"], segment["endMs"])
+            previous["bpm"] = round(
+                _weighted_median(
+                    [previous["bpm"], segment["bpm"]],
+                    [previous["confidence"], segment["confidence"]],
+                ),
+                2,
+            )
+            previous["confidence"] = round((previous["confidence"] + segment["confidence"]) / 2)
+        else:
+            merged.append(dict(segment))
+    return merged
+
+
+def analyze_bpm_samples(
+    samples,
+    sample_rate: int,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
+) -> dict:
+    """Estimate stable and local tempos from the decoded waveform.
+
+    This intentionally combines independent local estimates with timestamp-based
+    beat regression. It avoids treating one onset-envelope peak as ground truth.
+    """
+    import librosa
+    import numpy as np
+    from scipy.stats import uniform
+
+    _check_bpm_cancelled(cancel_callback)
+    waveform = np.asarray(samples, dtype=np.float32)
+    if waveform.ndim > 1:
+        waveform = librosa.to_mono(waveform)
+    if waveform.size < sample_rate * 3:
+        raise ValueError("音频过短，无法可靠分析 BPM。")
+
+    _bpm_progress(progress_callback, 28, "移除静音并增强节奏瞬态")
+    waveform, active_interval = librosa.effects.trim(waveform, top_db=35, hop_length=BPM_ANALYSIS_HOP_LENGTH)
+    if waveform.size < sample_rate * 3:
+        raise ValueError("有效音频过短，无法可靠分析 BPM。")
+    active_start_seconds = active_interval[0] / sample_rate
+    _check_bpm_cancelled(cancel_callback)
+
+    harmonic, percussive = librosa.effects.hpss(waveform)
+    percussive_onset = librosa.onset.onset_strength(
+        y=percussive,
+        sr=sample_rate,
+        hop_length=BPM_ANALYSIS_HOP_LENGTH,
+        lag=2,
+        max_size=3,
+    )
+    full_onset = librosa.onset.onset_strength(
+        y=waveform,
+        sr=sample_rate,
+        hop_length=BPM_ANALYSIS_HOP_LENGTH,
+        lag=2,
+        max_size=3,
+    )
+    del harmonic
+    percussive_scale = max(float(np.std(percussive_onset)), 1e-6)
+    full_scale = max(float(np.std(full_onset)), 1e-6)
+    onset_envelope = 0.72 * (percussive_onset / percussive_scale) + 0.28 * (full_onset / full_scale)
+    if float(np.max(onset_envelope)) <= 0:
+        raise ValueError("音频中没有足够清晰的节奏瞬态。")
+
+    duration_seconds = waveform.size / sample_rate
+    window_seconds = min(28.0, max(16.0, duration_seconds))
+    window_count = 1 if duration_seconds <= window_seconds + 2 else min(9, max(3, int(np.ceil(duration_seconds / 24.0))))
+    starts = np.linspace(0.0, max(0.0, duration_seconds - window_seconds), window_count)
+    local_results: list[dict] = []
+    tempo_prior = uniform(loc=40.0, scale=260.0)
+
+    for index, start_seconds in enumerate(starts, start=1):
+        _check_bpm_cancelled(cancel_callback)
+        progress = 40 + int(index / len(starts) * 40)
+        _bpm_progress(progress_callback, progress, f"分析节奏片段 {index}/{len(starts)}")
+        start_frame = int(round(start_seconds * sample_rate / BPM_ANALYSIS_HOP_LENGTH))
+        end_frame = int(round((start_seconds + window_seconds) * sample_rate / BPM_ANALYSIS_HOP_LENGTH))
+        segment_onset = onset_envelope[start_frame:max(start_frame + 1, end_frame)]
+        if len(segment_onset) < 12:
+            continue
+        dynamic_tempi = librosa.feature.tempo(
+            onset_envelope=segment_onset,
+            sr=sample_rate,
+            hop_length=BPM_ANALYSIS_HOP_LENGTH,
+            aggregate=None,
+            max_tempo=300.0,
+            prior=tempo_prior,
+        )
+        dynamic_tempi = np.asarray(dynamic_tempi, dtype=float)
+        dynamic_tempi = dynamic_tempi[np.isfinite(dynamic_tempi) & (dynamic_tempi > 20.0)]
+        if len(dynamic_tempi) < 4:
+            continue
+        candidate = _weighted_median(
+            np.asarray([_normalize_bpm(value) for value in dynamic_tempi]),
+            np.ones(len(dynamic_tempi)),
+        )
+        tracked_tempo, beat_frames = librosa.beat.beat_track(
+            onset_envelope=segment_onset,
+            sr=sample_rate,
+            hop_length=BPM_ANALYSIS_HOP_LENGTH,
+            start_bpm=candidate,
+            tightness=130,
+            trim=False,
+            prior=tempo_prior,
+            units="frames",
+        )
+        beat_times = librosa.frames_to_time(beat_frames, sr=sample_rate, hop_length=BPM_ANALYSIS_HOP_LENGTH)
+        regressed_bpm, consistency, beat_count = _robust_bpm_from_beats(beat_times)
+        tempo_value = regressed_bpm or _normalize_bpm(float(np.asarray(tracked_tempo).reshape(-1)[0]))
+        if not np.isfinite(tempo_value):
+            continue
+        local_results.append(
+            {
+                "startMs": int(round((active_start_seconds + start_seconds) * 1000)),
+                "endMs": int(round((active_start_seconds + min(duration_seconds, start_seconds + window_seconds)) * 1000)),
+                "bpm": float(tempo_value),
+                "consistency": float(consistency),
+                "beatCount": int(beat_count),
+            }
+        )
+
+    if not local_results:
+        raise ValueError("未能从音频中提取稳定的节拍。")
+    _check_bpm_cancelled(cancel_callback)
+    _bpm_progress(progress_callback, 84, "汇总候选 BPM 并校正拍层级")
+
+    candidate_values = [item["bpm"] for item in local_results]
+    candidate_weights = [max(0.2, item["consistency"]) for item in local_results]
+    bpm, agreement, margin = _consensus_bpm(candidate_values, candidate_weights)
+    result_segments = []
+    for item in local_results:
+        local_agreement = max(0.0, 1.0 - abs(np.log2(item["bpm"] / bpm)) / 0.09)
+        confidence = int(round(100 * min(1.0, 0.45 * item["consistency"] + 0.55 * local_agreement)))
+        result_segments.append(
+            {
+                "startMs": item["startMs"],
+                "endMs": item["endMs"],
+                "bpm": round(item["bpm"], 2),
+                "confidence": confidence,
+                "beatCount": item["beatCount"],
+            }
+        )
+    sections = _merge_tempo_segments(result_segments)
+    mean_consistency = float(np.average([item["consistency"] for item in local_results], weights=candidate_weights))
+    confidence = int(round(100 * min(0.99, 0.45 * agreement + 0.35 * mean_consistency + 0.20 * margin)))
+    candidates = [{"bpm": round(bpm, 2), "label": "推荐拍层"}]
+    if bpm / 2 >= 40:
+        candidates.append({"bpm": round(bpm / 2, 2), "label": "半速候选"})
+    if bpm * 2 <= 320:
+        candidates.append({"bpm": round(bpm * 2, 2), "label": "倍速候选"})
+    _bpm_progress(progress_callback, 100, "BPM 分析完成")
+    return {
+        "bpm": round(bpm, 2),
+        "confidence": confidence,
+        "beatCount": int(sum(item["beatCount"] for item in local_results)),
+        "analysisDurationMs": int(round(duration_seconds * 1000)),
+        "activeStartMs": int(round(active_start_seconds * 1000)),
+        "segmentCount": len(local_results),
+        "isVariableTempo": len(sections) > 1,
+        "segments": sections,
+        "candidates": candidates,
+        "method": "多片段节拍回归",
+    }
+
+
+def analyze_bpm(
+    path: Path,
+    maximum_seconds: int = 240,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
+) -> dict:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
         analysis_path = Path(temp_file.name)
     try:
+        _bpm_progress(progress_callback, 8, "正在解码音频")
         result = subprocess.run(
             [
-                str(FFMPEG_PATH), "-y", "-i", str(path), "-vn", "-ac", "1", "-ar", "22050",
+                str(FFMPEG_PATH), "-y", "-i", str(path), "-vn", "-ac", "1", "-ar", str(BPM_ANALYSIS_SAMPLE_RATE),
                 "-t", str(maximum_seconds), "-c:a", "pcm_s16le", str(analysis_path),
             ],
             stdout=subprocess.DEVNULL,
@@ -539,25 +806,14 @@ def analyze_bpm(path: Path, maximum_seconds: int = 180) -> dict:
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0,
         )
+        _check_bpm_cancelled(cancel_callback)
         if result.returncode != 0:
             raise RuntimeError("无法准备 BPM 分析音频。")
+        import librosa
+
         samples, sample_rate = librosa.load(str(analysis_path), sr=None, mono=True)
-        if samples.size < sample_rate * 3:
-            raise ValueError("音频过短，无法可靠分析 BPM。")
-        onset_envelope = librosa.onset.onset_strength(y=samples, sr=sample_rate)
-        tempo, beat_frames = librosa.beat.beat_track(
-            onset_envelope=onset_envelope,
-            sr=sample_rate,
-            units="frames",
-        )
-        bpm = float(np.asarray(tempo).reshape(-1)[0])
-        if not np.isfinite(bpm) or bpm <= 0:
-            raise ValueError("未检测到稳定节拍。")
-        return {
-            "bpm": round(bpm, 1),
-            "beatCount": int(len(beat_frames)),
-            "analysisDurationMs": int(round(samples.size / sample_rate * 1000)),
-        }
+        _bpm_progress(progress_callback, 20, "已解码音频，正在建立节奏特征")
+        return analyze_bpm_samples(samples, sample_rate, progress_callback, cancel_callback)
     finally:
         analysis_path.unlink(missing_ok=True)
 

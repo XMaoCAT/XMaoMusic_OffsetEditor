@@ -287,21 +287,17 @@
           </div>
         </div>
 
-        <section class="tempo-workspace" aria-label="BPM 分析">
-          <div class="tempo-readout">
-            <span>BPM</span>
-            <strong id="bpmValue">--.-</strong>
-            <small id="bpmStatus">等待音频</small>
-          </div>
-          <div class="beat-lane" id="beatLane" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-            <i id="beatCursor"></i>
-          </div>
-          <div class="tempo-meta">
-            <span>分析范围</span>
-            <strong id="bpmDuration">--:--</strong>
-          </div>
-        </section>
+        <button class="bpm-measure-card" id="bpmMeasureButton" type="button" disabled>
+          <span class="bpm-measure-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 20h10M9 20V8l6-4 4 16M9 8l6 4M11 14h4"/><path d="M4 10v4m16-4v4"/></svg>
+          </span>
+          <span class="bpm-measure-copy">
+            <strong>测量 BPM</strong>
+            <small id="bpmButtonStatus">导入音频后可开始测量</small>
+          </span>
+          <span class="bpm-measure-value" id="bpmButtonValue">--.-</span>
+          <svg class="bpm-measure-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button>
 
         <div class="conversion-route" aria-live="polite">
           <div>
@@ -408,13 +404,60 @@
       <div>
         <h2 id="ncmDialogTitle">转换 NCM 文件</h2>
         <p id="ncmDialogFile">--</p>
-        <p>将先在后台转换为 WAV，完成后自动载入并分析 BPM。</p>
+        <p>将先在后台转换为 WAV，完成后可在应用内测量 BPM。</p>
       </div>
       <div class="dialog-actions">
         <button class="secondary-button" id="cancelNcmButton" type="submit" value="cancel">取消</button>
         <button class="primary-button" id="confirmNcmButton" type="submit" value="confirm">继续转换</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="bpm-dialog" id="bpmDialog" aria-labelledby="bpmDialogTitle" aria-describedby="bpmProgressMessage">
+    <div class="bpm-dialog-header">
+      <span class="dialog-icon bpm-dialog-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M7 20h10M9 20V8l6-4 4 16M9 8l6 4M11 14h4"/><path d="M4 10v4m16-4v4"/></svg>
+      </span>
+      <div>
+        <h2 id="bpmDialogTitle">测量 BPM</h2>
+        <p id="bpmDialogFile">--</p>
+      </div>
+    </div>
+
+    <section class="bpm-progress-panel" id="bpmProgressPanel" aria-live="polite">
+      <div class="bpm-progress-copy">
+        <strong id="bpmProgressMessage">正在准备分析</strong>
+        <span id="bpmProgressValue">0%</span>
+      </div>
+      <div class="bpm-progress-track" aria-hidden="true"><span id="bpmProgressFill"></span></div>
+      <p>将对多个节奏片段进行投票，并以节拍时间戳回归校正结果。</p>
+    </section>
+
+    <section class="bpm-results" id="bpmResults" hidden aria-live="polite">
+      <div class="bpm-primary-result">
+        <span>估计 BPM</span>
+        <strong id="bpmResultValue">--.-</strong>
+        <small id="bpmResultConfidence">--</small>
+      </div>
+      <div class="bpm-result-summary">
+        <div><span>分析范围</span><strong id="bpmResultDuration">--:--</strong></div>
+        <div><span>节奏片段</span><strong id="bpmResultSegmentCount">--</strong></div>
+        <div><span>检测节拍</span><strong id="bpmResultBeatCount">--</strong></div>
+      </div>
+      <div class="bpm-result-group">
+        <span>速度分段</span>
+        <div class="bpm-segment-list" id="bpmSegmentList"></div>
+      </div>
+      <div class="bpm-result-group">
+        <span>拍层候选</span>
+        <div class="bpm-candidate-list" id="bpmCandidateList"></div>
+      </div>
+      <p class="bpm-result-note" id="bpmResultNote"></p>
+    </section>
+
+    <div class="dialog-actions bpm-dialog-actions">
+      <button class="secondary-button" id="bpmDismissButton" type="button" disabled>关闭</button>
+    </div>
   </dialog>
 
   <script src="fluid.js"></script>

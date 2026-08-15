@@ -149,6 +149,7 @@ class ConversionWorker(QObject):
 
 
 class BpmWorker(QObject):
+    progress = Signal(int, str)
     finished = Signal(str, object)
     failed = Signal(str, str)
 
@@ -159,7 +160,15 @@ class BpmWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            self.finished.emit(str(self.path), analyze_bpm(self.path))
+            thread = QThread.currentThread()
+            self.finished.emit(
+                str(self.path),
+                analyze_bpm(
+                    self.path,
+                    progress_callback=self.progress.emit,
+                    cancel_callback=thread.isInterruptionRequested,
+                ),
+            )
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("BPM analysis failed: %s", self.path)
             self.failed.emit(str(self.path), str(exc))
@@ -195,6 +204,7 @@ class WebBridge(QObject):
     conversionFinished = Signal(str)
     conversionFailed = Signal(str)
     bpmAnalysisStarted = Signal(str)
+    bpmAnalysisProgress = Signal(int, str)
     bpmDetected = Signal(str)
     bpmAnalysisFailed = Signal(str)
     ncmConfirmationRequested = Signal(str, str)
@@ -221,7 +231,6 @@ class WebBridge(QObject):
         self.conversion_worker: Optional[ConversionWorker] = None
         self.bpm_thread: Optional[QThread] = None
         self.bpm_worker: Optional[BpmWorker] = None
-        self.queued_bpm_path: Optional[Path] = None
         self.ncm_thread: Optional[QThread] = None
         self.ncm_worker: Optional[NcmWorker] = None
         self.pending_ncm_output: Optional[Path] = None
@@ -323,7 +332,6 @@ class WebBridge(QObject):
         self.player.setSource(QUrl.fromLocalFile(str(self.audio_path)))
         self.playbackPositionChanged.emit(0, int(data.get("durationMs", 0)))
         self.audioLoaded.emit(json.dumps(data, ensure_ascii=False))
-        self.queued_bpm_path = self.audio_path
 
     @Slot(str)
     def _on_audio_load_failed(self, message: str) -> None:
@@ -334,22 +342,22 @@ class WebBridge(QObject):
         self.load_thread = None
         self.load_worker = None
         self.pending_audio_path = None
-        queued = self.queued_bpm_path
-        self.queued_bpm_path = None
-        if queued and self.audio_path == queued:
-            QTimer.singleShot(0, lambda: self._queue_bpm_analysis(queued))
 
-    def _queue_bpm_analysis(self, path: Path) -> None:
-        if self.bpm_thread and self.bpm_thread.isRunning():
-            self.queued_bpm_path = path
-            return
-        self._start_bpm_analysis(path)
+    @Slot(result=str)
+    def measureBpm(self) -> str:  # noqa: N802
+        if not self.audio_path or not self.audio_data:
+            return json_result(ok=False, error="请先导入音频文件。")
+        if self._audio_task_in_progress():
+            return json_result(ok=False, error="请等待当前音频任务完成。")
+        self._start_bpm_analysis(self.audio_path)
+        return json_result(ok=True, pending=True, name=self.audio_path.name)
 
     def _start_bpm_analysis(self, path: Path) -> None:
         thread = QThread(self)
         worker = BpmWorker(path)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
+        worker.progress.connect(self.bpmAnalysisProgress)
         worker.finished.connect(self._on_bpm_detected)
         worker.failed.connect(self._on_bpm_failed)
         worker.finished.connect(thread.quit)
@@ -377,10 +385,6 @@ class WebBridge(QObject):
     def _clear_bpm_runtime(self) -> None:
         self.bpm_thread = None
         self.bpm_worker = None
-        queued = self.queued_bpm_path
-        self.queued_bpm_path = None
-        if queued and self.audio_path == queued:
-            QTimer.singleShot(0, lambda: self._start_bpm_analysis(queued))
 
     @Slot(str, result=str)
     def convertNcm(self, path_text: str) -> str:  # noqa: N802

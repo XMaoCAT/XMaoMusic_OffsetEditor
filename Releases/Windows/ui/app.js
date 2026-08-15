@@ -59,11 +59,9 @@
     converterWaveformCanvas: $("#converterWaveformCanvas"),
     converterEmptyState: $("#converterEmptyState"),
     converterLoadingState: $("#converterLoadingState"),
-    bpmValue: $("#bpmValue"),
-    bpmStatus: $("#bpmStatus"),
-    bpmDuration: $("#bpmDuration"),
-    tempoWorkspace: $(".tempo-workspace"),
-    beatLane: $("#beatLane"),
+    bpmMeasureButton: $("#bpmMeasureButton"),
+    bpmButtonStatus: $("#bpmButtonStatus"),
+    bpmButtonValue: $("#bpmButtonValue"),
     converterSourceFormat: $("#converterSourceFormat"),
     converterTargetFormat: $("#converterTargetFormat"),
     converterEstimatedSize: $("#converterEstimatedSize"),
@@ -80,6 +78,22 @@
     ncmDialogFile: $("#ncmDialogFile"),
     cancelNcmButton: $("#cancelNcmButton"),
     confirmNcmButton: $("#confirmNcmButton"),
+    bpmDialog: $("#bpmDialog"),
+    bpmDialogFile: $("#bpmDialogFile"),
+    bpmProgressPanel: $("#bpmProgressPanel"),
+    bpmProgressMessage: $("#bpmProgressMessage"),
+    bpmProgressValue: $("#bpmProgressValue"),
+    bpmProgressFill: $("#bpmProgressFill"),
+    bpmResults: $("#bpmResults"),
+    bpmResultValue: $("#bpmResultValue"),
+    bpmResultConfidence: $("#bpmResultConfidence"),
+    bpmResultDuration: $("#bpmResultDuration"),
+    bpmResultSegmentCount: $("#bpmResultSegmentCount"),
+    bpmResultBeatCount: $("#bpmResultBeatCount"),
+    bpmSegmentList: $("#bpmSegmentList"),
+    bpmCandidateList: $("#bpmCandidateList"),
+    bpmResultNote: $("#bpmResultNote"),
+    bpmDismissButton: $("#bpmDismissButton"),
   };
 
   const state = {
@@ -91,6 +105,7 @@
     converting: false,
     activeTool: "offset",
     bpm: null,
+    bpmMeasuring: false,
     pendingNcmPath: null,
     progress: 0,
     theme: document.documentElement.dataset.theme || "dark",
@@ -149,6 +164,7 @@
       this.conversionFinished = new MockSignal();
       this.conversionFailed = new MockSignal();
       this.bpmAnalysisStarted = new MockSignal();
+      this.bpmAnalysisProgress = new MockSignal();
       this.bpmDetected = new MockSignal();
       this.bpmAnalysisFailed = new MockSignal();
       this.ncmConfirmationRequested = new MockSignal();
@@ -189,8 +205,6 @@
       callback(JSON.stringify({ ok: true, pending: true, name: "ouroboros -twin stroke of the end-.wav" }));
       setTimeout(() => {
         this.audioLoaded.emit(JSON.stringify(mockAudio()));
-        this.bpmAnalysisStarted.emit("ouroboros -twin stroke of the end-.wav");
-        setTimeout(() => this.bpmDetected.emit(JSON.stringify({ bpm: 174.2, beatCount: 880, analysisDurationMs: 180000 })), 520);
       }, 420);
     }
     loadAudio(_path, callback) {
@@ -230,10 +244,35 @@
           clearInterval(timer);
           this.ncmConverted.emit("Output/mock.wav");
           this.audioLoaded.emit(JSON.stringify({ ...mockAudio(), path, name: "Rubbish Sorting.wav", stem: "Rubbish Sorting" }));
-          this.bpmAnalysisStarted.emit("Rubbish Sorting.wav");
-          setTimeout(() => this.bpmDetected.emit(JSON.stringify({ bpm: 129.2, beatCount: 329, analysisDurationMs: 166504 })), 400);
         }
       }, 100);
+    }
+    measureBpm(callback) {
+      callback(JSON.stringify({ ok: true, pending: true }));
+      this.bpmAnalysisStarted.emit("ouroboros -twin stroke of the end-.wav");
+      const stages = [
+        [12, "正在解码音频"], [30, "移除静音并增强节奏瞬态"], [51, "分析节奏片段 2/5"],
+        [72, "分析节奏片段 4/5"], [86, "汇总候选 BPM 并校正拍层级"], [100, "BPM 分析完成"],
+      ];
+      let index = 0;
+      const timer = setInterval(() => {
+        const [progress, message] = stages[index++];
+        this.bpmAnalysisProgress.emit(progress, message);
+        if (index === stages.length) {
+          clearInterval(timer);
+          this.bpmDetected.emit(JSON.stringify({
+            bpm: 174.18,
+            confidence: 91,
+            beatCount: 882,
+            analysisDurationMs: 180000,
+            segmentCount: 5,
+            isVariableTempo: false,
+            segments: [{ startMs: 4200, endMs: 177800, bpm: 174.18, confidence: 96, beatCount: 882 }],
+            candidates: [{ bpm: 174.18, label: "推荐拍层" }, { bpm: 87.09, label: "半速候选" }],
+            method: "多片段节拍回归",
+          }));
+        }
+      }, 180);
     }
     revealOutput(callback) { callback(JSON.stringify({ ok: true })); }
     playFrom(position, callback) {
@@ -346,6 +385,95 @@
     const seconds = Math.floor((total % 60000) / 1000);
     const ms = total % 1000;
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+  }
+
+  function formatBpmRange(milliseconds) {
+    return formatDuration(Number(milliseconds)).slice(0, 5);
+  }
+
+  function bpmConfidenceLabel(confidence) {
+    const value = Number(confidence) || 0;
+    if (value >= 80) return "高可信";
+    if (value >= 60) return "中等可信";
+    return "低可信，建议试听确认";
+  }
+
+  function setBpmProgress(progress, message) {
+    const normalized = Math.max(0, Math.min(100, Number(progress) || 0));
+    elements.bpmProgressMessage.textContent = message || "正在分析节奏";
+    elements.bpmProgressValue.textContent = `${Math.round(normalized)}%`;
+    elements.bpmProgressFill.style.transform = `scaleX(${normalized / 100})`;
+  }
+
+  function resetBpmDialog() {
+    elements.bpmProgressPanel.hidden = false;
+    elements.bpmResults.hidden = true;
+    elements.bpmSegmentList.replaceChildren();
+    elements.bpmCandidateList.replaceChildren();
+    elements.bpmResultNote.textContent = "";
+    elements.bpmDismissButton.disabled = true;
+    setBpmProgress(0, "正在准备分析");
+  }
+
+  function resultRow(primary, secondary) {
+    const row = document.createElement("div");
+    const label = document.createElement("span");
+    const value = document.createElement("strong");
+    label.textContent = primary;
+    value.textContent = secondary;
+    row.append(label, value);
+    return row;
+  }
+
+  function renderBpmResult(result) {
+    const bpm = Number(result.bpm) || 0;
+    const confidence = Math.max(0, Math.min(100, Number(result.confidence) || 0));
+    state.bpm = result;
+    elements.bpmButtonValue.textContent = bpm ? bpm.toFixed(2) : "--.-";
+    elements.bpmButtonStatus.textContent = bpm ? `${bpmConfidenceLabel(confidence)} · ${result.segmentCount || 0} 个片段` : "未检测到稳定 BPM";
+    elements.bpmResultValue.textContent = bpm ? bpm.toFixed(2) : "--.-";
+    elements.bpmResultConfidence.textContent = `${bpmConfidenceLabel(confidence)} · ${Math.round(confidence)}%`;
+    elements.bpmResultDuration.textContent = formatBpmRange(result.analysisDurationMs);
+    elements.bpmResultSegmentCount.textContent = `${result.segmentCount || 0} 个`;
+    elements.bpmResultBeatCount.textContent = Number(result.beatCount || 0).toLocaleString();
+    elements.bpmSegmentList.replaceChildren();
+    (result.segments || []).forEach((segment) => {
+      const range = `${formatBpmRange(segment.startMs)} - ${formatBpmRange(segment.endMs)}`;
+      const bpmText = `${Number(segment.bpm).toFixed(2)} BPM · ${Math.round(Number(segment.confidence) || 0)}%`;
+      elements.bpmSegmentList.append(resultRow(range, bpmText));
+    });
+    elements.bpmCandidateList.replaceChildren();
+    (result.candidates || []).forEach((candidate) => {
+      elements.bpmCandidateList.append(resultRow(candidate.label || "候选", `${Number(candidate.bpm).toFixed(2)} BPM`));
+    });
+    elements.bpmResultNote.textContent = result.isVariableTempo
+      ? "检测到可能的变速段，主 BPM 是可信度最高的拍层候选。"
+      : `各局部片段节奏一致，结果由 ${result.method || "多片段节拍回归"} 得出。`;
+    elements.bpmProgressPanel.hidden = true;
+    elements.bpmResults.hidden = false;
+    elements.bpmDismissButton.disabled = false;
+  }
+
+  async function startBpmMeasurement() {
+    if (!state.audio || state.bpmMeasuring) return;
+    state.bpmMeasuring = true;
+    elements.bpmMeasureButton.disabled = true;
+    elements.bpmMeasureButton.classList.add("is-measuring");
+    elements.bpmDialogFile.textContent = state.audio.name;
+    resetBpmDialog();
+    if (!elements.bpmDialog.open) elements.bpmDialog.showModal();
+    try {
+      const result = await callBackend("measureBpm");
+      if (!result.ok) {
+        throw new Error(result.error || "无法启动 BPM 分析。");
+      }
+    } catch (error) {
+      state.bpmMeasuring = false;
+      elements.bpmMeasureButton.disabled = !state.audio;
+      elements.bpmMeasureButton.classList.remove("is-measuring");
+      if (elements.bpmDialog.open) elements.bpmDialog.close();
+      showToast("无法测量 BPM", error.message, true);
+    }
   }
 
   function updatePlaybackUi() {
@@ -611,6 +739,7 @@
   function applyAudio(data) {
     state.audio = data;
     state.bpm = null;
+    state.bpmMeasuring = false;
     state.playbackState = "stopped";
     state.playbackPositionMs = 0;
     state.playbackDurationMs = data.durationMs;
@@ -656,10 +785,10 @@
     elements.loadingState.hidden = true;
     elements.converterEmptyState.hidden = true;
     elements.converterLoadingState.hidden = true;
-    elements.bpmValue.textContent = "--.-";
-    elements.bpmStatus.textContent = "正在分析节拍";
-    elements.bpmDuration.textContent = "--:--";
-    elements.tempoWorkspace.classList.remove("is-active");
+    elements.bpmMeasureButton.disabled = false;
+    elements.bpmMeasureButton.classList.remove("is-measuring");
+    elements.bpmButtonValue.textContent = "--.-";
+    elements.bpmButtonStatus.textContent = "可开始测量节拍与局部速度";
     renderWaveform();
     renderConverterWaveform();
     updateDerivedState();
@@ -999,31 +1128,39 @@
       setStatus("格式转换失败", "error", 0);
       showToast("转换失败", message, true);
     });
-    backend.bpmAnalysisStarted.connect(() => {
+    backend.bpmAnalysisStarted.connect((name) => {
       state.bpm = null;
-      elements.bpmValue.textContent = "--.-";
-      elements.bpmStatus.textContent = "正在分析节拍";
-      elements.bpmDuration.textContent = "--:--";
-      elements.tempoWorkspace.classList.remove("is-active");
+      state.bpmMeasuring = true;
+      elements.bpmMeasureButton.disabled = true;
+      elements.bpmMeasureButton.classList.add("is-measuring");
+      elements.bpmDialogFile.textContent = name || state.audio?.name || "当前音频";
+      resetBpmDialog();
+      setBpmProgress(2, "正在准备 BPM 分析");
+      if (!elements.bpmDialog.open) elements.bpmDialog.showModal();
+    });
+    backend.bpmAnalysisProgress.connect((progress, message) => {
+      setBpmProgress(progress, message);
     });
     backend.bpmDetected.connect((payload) => {
       try {
         const result = JSON.parse(payload);
-        state.bpm = result.bpm;
-        elements.bpmValue.textContent = Number(result.bpm).toFixed(1);
-        elements.bpmStatus.textContent = `检测到 ${result.beatCount} 个节拍`;
-        elements.bpmDuration.textContent = formatDuration(result.analysisDurationMs).slice(0, 5);
-        elements.beatLane.style.setProperty("--beat-period", `${Math.max(0.24, 60 / result.bpm)}s`);
-        elements.tempoWorkspace.classList.add("is-active");
+        state.bpmMeasuring = false;
+        elements.bpmMeasureButton.disabled = !state.audio;
+        elements.bpmMeasureButton.classList.remove("is-measuring");
+        renderBpmResult(result);
+        setStatus("BPM 分析完成", "ready", 100);
       } catch (error) {
         showToast("BPM 数据错误", error.message, true);
       }
     });
     backend.bpmAnalysisFailed.connect((message) => {
-      elements.bpmValue.textContent = "--.-";
-      elements.bpmStatus.textContent = "未检测到稳定节拍";
-      elements.bpmDuration.textContent = "--:--";
-      elements.tempoWorkspace.classList.remove("is-active");
+      state.bpmMeasuring = false;
+      elements.bpmMeasureButton.disabled = !state.audio;
+      elements.bpmMeasureButton.classList.remove("is-measuring");
+      elements.bpmButtonStatus.textContent = "未检测到稳定 BPM";
+      elements.bpmDismissButton.disabled = false;
+      setBpmProgress(100, "BPM 分析未完成");
+      setStatus("BPM 分析未完成", "error", 0);
       showToast("BPM 分析未完成", message, true);
     });
     backend.ncmConfirmationRequested.connect(requestNcmConfirmation);
@@ -1079,10 +1216,6 @@
       setStatus("准备就绪", "ready", 0);
       if (new URLSearchParams(window.location.search).get("mock") === "loaded") {
         applyAudio(mockAudio());
-        if (backend instanceof MockBackend) {
-          backend.bpmAnalysisStarted.emit("ouroboros -twin stroke of the end-.wav");
-          setTimeout(() => backend.bpmDetected.emit(JSON.stringify({ bpm: 174.2, beatCount: 880, analysisDurationMs: 180000 })), 280);
-        }
       }
     } catch (error) {
       setStatus("环境初始化失败", "error", 0);
@@ -1182,6 +1315,16 @@
   elements.previewCutButton.addEventListener("click", previewFromCut);
   elements.exportButton.addEventListener("click", startExport);
   elements.convertButton.addEventListener("click", startConversion);
+  elements.bpmMeasureButton.addEventListener("click", startBpmMeasurement);
+  elements.bpmDismissButton.addEventListener("click", () => {
+    if (!state.bpmMeasuring) elements.bpmDialog.close();
+  });
+  elements.bpmDialog.addEventListener("cancel", (event) => {
+    if (state.bpmMeasuring) {
+      event.preventDefault();
+      showToast("BPM 正在分析", "分析完成后可关闭此窗口。", false);
+    }
+  });
   elements.converterFormat.addEventListener("change", () => refreshConverterFormatControls());
   [elements.converterSampleRate, elements.converterChannels, elements.converterBitDepth, elements.converterBitrate]
     .forEach((element) => element.addEventListener("change", updateConverterState));
